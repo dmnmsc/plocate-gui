@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl
 )
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QIcon
 import os
 
 # Set up gettext for internationalization, defaulting to English strings
@@ -97,7 +97,20 @@ class PlocateGUI(QWidget):
         self.setWindowTitle(_("Plocate GUI"))
         self.resize(800, 550)
 
-        # Define the desired percentage for the 'Name' column (Column 0)
+        # Try to load the icon from the system theme (for the installed version).
+        icon = QIcon.fromTheme("plocate-gui")
+
+        #    try to load it from the relative 'resources' path.
+        if icon.isNull():
+            source_path = os.path.join(os.path.dirname(__file__), 'resources', 'plocate-gui.svg')
+            if os.path.exists(source_path):
+                icon = QIcon(source_path)
+
+        # 3. Apply the icon if a valid one was found.
+        if not icon.isNull():
+            self.setWindowIcon(icon)
+
+            # Define the desired percentage for the 'Name' column (Column 0)
         self.RESPONSIVE_WIDTH_PERCENTAGE = 0.40  # 40% of the table width
         self.MIN_NAME_WIDTH = 150  # Minimum width to prevent the column from collapsing
 
