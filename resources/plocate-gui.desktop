@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Plocate GUI
+GenericName=File Search Utility
+Comment=Fast GUI search for files using plocate
+Exec=plocate-gui
+Icon=plocate-gui
+Categories=Utility;System;FileTools;
+Terminal=false
+StartupNotify=true
