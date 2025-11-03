@@ -13,7 +13,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QDesktopServices, QIcon, QAction
 import os
 
-# Set up gettext for internationalization, defaulting to English strings
+# Set up gettext for internationalization, defaulting to English strings.
 _ = gettext.gettext
 
 # Database path definitions for clarity
@@ -166,14 +166,15 @@ class PlocateGUI(QWidget):
         # Input and Options container
         search_options_layout = QHBoxLayout()
 
-        # Search input with icon
+        # Search input with icon and CLEAR BUTTON
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(_("Enter search term..."))
         search_icon = QIcon.fromTheme("edit-find")
         search_action = QAction(search_icon, "", self.search_input)
-        # FIX: QLineEdit.ActionPosition.Leading -> QLineEdit.ActionPosition.LeadingPosition
+        # FIX: Ensure compatibility with PyQt6 ActionPosition enumeration
         self.search_input.addAction(search_action, QLineEdit.ActionPosition.LeadingPosition)
         self.search_input.returnPressed.connect(self.run_search)
+        self.search_input.setClearButtonEnabled(True)
         search_options_layout.addWidget(self.search_input)
 
         # Checkbox for case insensitivity with icon
@@ -185,14 +186,15 @@ class PlocateGUI(QWidget):
 
         main_layout.addLayout(search_options_layout)
 
-        # Filter input (regex) with icon
+        # Filter input (regex) with icon and CLEAR BUTTON
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText(_("Optional filter (regex pattern)"))
         filter_icon = QIcon.fromTheme("view-list-details")
         filter_action = QAction(filter_icon, "", self.filter_input)
-        # FIX: QLineEdit.ActionPosition.Leading -> QLineEdit.ActionPosition.LeadingPosition
+        # FIX: Ensure compatibility with PyQt6 ActionPosition enumeration
         self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
         self.filter_input.returnPressed.connect(self.run_search)
+        self.filter_input.setClearButtonEnabled(True)
         main_layout.addWidget(self.filter_input)
 
         # Results table setup
@@ -220,16 +222,17 @@ class PlocateGUI(QWidget):
         info_label.setStyleSheet("color: gray; font-size: 11px;")
         main_layout.addWidget(info_label)
 
-        # --- CUSTOM EXCLUSION INPUT with icon ---
+        # --- CUSTOM EXCLUSION INPUT with icon and CLEAR BUTTON ---
         self.custom_exclude_input = QLineEdit()
         self.custom_exclude_input.setPlaceholderText(_("Paths to exclude (System DB only): E.g.: /mnt/backup /tmp"))
         exclude_icon = QIcon.fromTheme("folder-close")
         exclude_action = QAction(exclude_icon, "", self.custom_exclude_input)
-        # FIX: QLineEdit.ActionPosition.Leading -> QLineEdit.ActionPosition.LeadingPosition
+        # FIX: Ensure compatibility with PyQt6 ActionPosition enumeration
         self.custom_exclude_input.addAction(exclude_action, QLineEdit.ActionPosition.LeadingPosition)
         self.custom_exclude_input.setToolTip(
             _("Enter space-separated paths to exclude them from the main index (System DB).")
         )
+        self.custom_exclude_input.setClearButtonEnabled(True)
         main_layout.addWidget(self.custom_exclude_input)
 
         # --- ACTION BUTTONS CONTAINER ---
@@ -407,6 +410,7 @@ class PlocateGUI(QWidget):
         return name, path, is_dir
 
     def open_file(self):
+        """Opens the selected file/directory using the system's default handler."""
         # Unpack 3 elements
         name, path, is_dir = self.get_selected_row_data()
         if not name or not path:
@@ -417,6 +421,7 @@ class PlocateGUI(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(full_path))
 
     def open_path(self):
+        """Opens the containing folder of the selected item."""
         # Unpack 3 elements
         name, path, is_dir = self.get_selected_row_data()
         if not name or not path:
@@ -424,7 +429,7 @@ class PlocateGUI(QWidget):
             return
 
         # If it's a directory, open its full path; if it's a file, open the parent path ('path')
-        path_to_open = os.path.join(path, name) if is_dir else path
+        path_to_open = os.path.join(path, name) if is_dir and path != os.path.sep else path
 
         QDesktopServices.openUrl(QUrl.fromLocalFile(path_to_open))
 
@@ -437,7 +442,7 @@ class PlocateGUI(QWidget):
 
     def run_updatedb_command(self, update_command, message):
         """Helper function to execute the updatedb command. Returns success (True/False)."""
-        # The user will rely on the final success/error dialogs.
+        # The user will rely on the final success/error dialogs shown in the calling function.
 
         try:
             # Execute the command
@@ -542,7 +547,6 @@ class PlocateGUI(QWidget):
 
         # Check which button object was clicked
         if clicked_button == ok_button:
-            system_update = True
             media_update = media_checkbox.isChecked()
 
             final_message = []
@@ -572,7 +576,7 @@ class PlocateGUI(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    # Set translation for '_' to work correctly
+    # Set translation for '_' to work correctly.
     # This is essential for language handling in desktop environments.
 
     window = PlocateGUI()
