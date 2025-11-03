@@ -514,8 +514,8 @@ class PlocateGUI(QWidget):
             if not filepath:
                 continue
 
-            # Heuristics: If path ends with separator or has no extension, assume directory
-            is_dir = filepath.endswith(os.path.sep) or not os.path.splitext(filepath)[1]
+            # Heuristics: Assume directory if the path ends with a separator (as returned by plocate).
+            is_dir = filepath.endswith(os.path.sep)
 
             if filepath == os.path.sep:
                 name = os.path.sep
