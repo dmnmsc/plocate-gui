@@ -14,6 +14,7 @@ from PyQt6.QtGui import QDesktopServices, QIcon, QAction
 import os
 
 # Set up gettext for internationalization, defaulting to English strings.
+# User-facing strings use the _() function for translation.
 _ = gettext.gettext
 
 # Database path definitions for clarity
@@ -435,8 +436,12 @@ class PlocateGUI(QWidget):
 
     def keyPressEvent(self, event):
         """Handle global key press events."""
+        # Handle F5 for database update
         if event.key() == Qt.Key.Key_F5:
             self.update_unified_database()
+        # Handle Escape key to close the application
+        elif event.key() == Qt.Key.Key_Escape:
+            self.close()
         else:
             super().keyPressEvent(event)
 
