@@ -190,7 +190,7 @@ class PlocateGUI(QWidget):
 
         # Filter input (regex) with icon and CLEAR BUTTON
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText(_("Optional filter (regex pattern)"))
+        self.filter_input.setPlaceholderText(_("Optional filter (space-separated keywords or regex)"))
         filter_icon = QIcon.fromTheme("view-list-details")
         filter_action = QAction(filter_icon, "", self.filter_input)
         # Ensure compatibility with PyQt6 ActionPosition enumeration
@@ -314,7 +314,8 @@ class PlocateGUI(QWidget):
 
     def run_search(self):
         term = self.search_input.text().strip()
-        filter_pattern = self.filter_input.text().strip()
+        raw_filter_pattern = self.filter_input.text().strip()
+        final_filter_pattern = ""
 
         if not term:
             self.model.set_data([])
@@ -346,12 +347,39 @@ class PlocateGUI(QWidget):
                 QMessageBox.warning(self, _("Error"), _("Error executing plocate:\n") + str(e))
                 return
 
-        if filter_pattern:
+        # --- NEW Multi-Keyword Filtering Logic ---
+        if raw_filter_pattern:
+            # Split by space, filter out empty strings (multiple spaces)
+            keywords = [k for k in raw_filter_pattern.split() if k]
+
+            if len(keywords) > 1:
+                # If multiple space-separated keywords are found, build an AND regex
+                # using lookahead assertions: (?=.*keyword1)(?=.*keyword2).*
+                # This ensures all keywords are present, regardless of order.
+
+                # IMPORTANT: Escape all keywords for safety, as they are not meant to be regex patterns
+                escaped_keywords = [re.escape(k) for k in keywords]
+
+                # Construct the lookahead pattern
+                lookahead_assertions = "".join(f"(?=.*{k})" for k in escaped_keywords)
+                final_filter_pattern = f"^{lookahead_assertions}.*$"
+            else:
+                # If it's a single word or a complex pattern without spaces, use the input directly
+                final_filter_pattern = raw_filter_pattern
+
+            # Now apply the constructed (or direct) regex filter
             try:
-                regex = re.compile(filter_pattern)
+                # Use re.IGNORECASE flag if plocate was case-insensitive,
+                # although plocate handles case. Applying the filter to the output
+                # should match the plocate flags if possible.
+                # Since plocate already did the initial search, we typically don't
+                # need to re-apply case insensitivity here unless the filter needs it too.
+                # Sticking to simple regex matching on output lines for simplicity.
+                regex = re.compile(final_filter_pattern)
                 files = [f for f in files if regex.search(f)]
             except re.error:
-                QMessageBox.warning(self, _("Error"), _("Filter contains an invalid regex pattern."))
+                QMessageBox.warning(self, _("Error"),
+                                    _("Filter contains an invalid regex pattern, or multi-keyword conversion failed."))
                 return
 
         display_rows = []
