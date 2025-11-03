@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl
 )
-from PyQt6.QtGui import QDesktopServices, QIcon
+from PyQt6.QtGui import QDesktopServices, QIcon, QAction
 import os
 
 # Set up gettext for internationalization, defaulting to English strings
@@ -22,12 +22,52 @@ MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
 
 
+# --- Icon Utility Function ---
+def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
+    """Returns a QIcon based on the file extension or if it is a directory."""
+
+    # 1. Directory Icon
+    if is_dir:
+        return QIcon.fromTheme("folder")
+
+    # 2. Icon based on Common Extensions (using Freedesktop icon naming spec)
+    ext = os.path.splitext(filepath)[1].lower()
+
+    if ext in ['.mp3', '.wav', '.ogg', '.flac']:
+        return QIcon.fromTheme("audio-x-generic")
+
+    if ext in ['.avi', '.mp4', '.mkv', '.mov']:
+        return QIcon.fromTheme("video-x-generic")
+
+    if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+        return QIcon.fromTheme("image-x-generic")
+
+    if ext in ['.pdf']:
+        return QIcon.fromTheme("application-pdf")
+
+    if ext in ['.doc', '.docx', '.odt']:
+        return QIcon.fromTheme("x-office-document")
+
+    if ext in ['.zip', '.rar', '.7z', '.tar', '.gz']:
+        return QIcon.fromTheme("package-x-generic")
+
+    if ext in ['.py', '.sh', '.c', '.cpp', '.html', '.js']:
+        return QIcon.fromTheme("text-x-script")
+
+    if ext in ['.txt', '.log', '.md']:
+        return QIcon.fromTheme("text-x-generic")
+
+    # 3. Default Icon (Generic File)
+    return QIcon.fromTheme("text-x-generic")
+
+
 # Model implementation for QTableView
 class PlocateResultsModel(QAbstractTableModel):
     """Data model for QTableView storing plocate results."""
 
     def __init__(self, data=None, parent=None):
         super().__init__(parent)
+        # Data format: (name, path, is_dir)
         self._data = data if data is not None else []
         self._headers = [_("Name"), _("Path")]
 
@@ -56,16 +96,24 @@ class PlocateResultsModel(QAbstractTableModel):
         if row >= len(self._data):
             return QVariant()
 
-        value = str(self._data[row][col])
+        # Unpack the three elements: (name, path, is_dir)
+        name, path, is_dir = self._data[row]
 
-        # Roles needed for display and sorting
+        # 1. Display/Edit Role (Text)
         if role == Qt.ItemDataRole.DisplayRole or role == Qt.ItemDataRole.EditRole:
-            # Data is stored as a list of tuples (name, path)
-            return value
+            if col == 0:
+                return name
+            else:
+                return path
 
-        # ROLE: Displays the full cell text when the mouse hovers over it.
+        # 2. Decoration Role (Icon) - Only for the 'Name' column
+        if role == Qt.ItemDataRole.DecorationRole and col == 0:
+            full_path = os.path.join(path, name)
+            return get_icon_for_file_type(full_path, is_dir)
+
+        # 3. ToolTip Role
         if role == Qt.ItemDataRole.ToolTipRole:
-            return value
+            return os.path.join(path, name)
 
         return QVariant()
 
@@ -82,6 +130,7 @@ class PlocateResultsModel(QAbstractTableModel):
 
         # Sort the internal data list (case-insensitive for names and paths)
         try:
+            # Sort uses index 0 (Name) or index 1 (Path)
             self._data.sort(key=lambda x: str(x[column]).lower(),
                             reverse=(order == Qt.SortOrder.DescendingOrder))
         except IndexError:
@@ -97,22 +146,17 @@ class PlocateGUI(QWidget):
         self.setWindowTitle(_("Plocate GUI"))
         self.resize(800, 550)
 
-        # Try to load the icon from the system theme (for the installed version).
+        # Try to load the application icon from the system theme
         icon = QIcon.fromTheme("plocate-gui")
-
-        #    try to load it from the relative 'resources' path.
         if icon.isNull():
-            source_path = os.path.join(os.path.dirname(__file__), 'resources', 'plocate-gui.svg')
-            if os.path.exists(source_path):
-                icon = QIcon(source_path)
+            # Fallback for a generic search/file icon if the custom one is missing
+            icon = QIcon.fromTheme("system-search")
 
-        # 3. Apply the icon if a valid one was found.
         if not icon.isNull():
             self.setWindowIcon(icon)
 
-            # Define the desired percentage for the 'Name' column (Column 0)
-        self.RESPONSIVE_WIDTH_PERCENTAGE = 0.40  # 40% of the table width
-        self.MIN_NAME_WIDTH = 150  # Minimum width to prevent the column from collapsing
+        self.RESPONSIVE_WIDTH_PERCENTAGE = 0.40
+        self.MIN_NAME_WIDTH = 150
 
         self.current_sort_column = -1
         self.current_sort_order = Qt.SortOrder.AscendingOrder
@@ -122,23 +166,32 @@ class PlocateGUI(QWidget):
         # Input and Options container
         search_options_layout = QHBoxLayout()
 
-        # Search input
+        # Search input with icon
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(_("Enter search term..."))
+        search_icon = QIcon.fromTheme("edit-find")
+        search_action = QAction(search_icon, "", self.search_input)
+        # FIX: QLineEdit.ActionPosition.Leading -> QLineEdit.ActionPosition.LeadingPosition
+        self.search_input.addAction(search_action, QLineEdit.ActionPosition.LeadingPosition)
         self.search_input.returnPressed.connect(self.run_search)
         search_options_layout.addWidget(self.search_input)
 
-        # Checkbox for case insensitivity
+        # Checkbox for case insensitivity with icon
         self.case_insensitive_checkbox = QCheckBox(_("Case insensitive (-i)"))
+        self.case_insensitive_checkbox.setIcon(QIcon.fromTheme("view-sort-ascending"))
         self.case_insensitive_checkbox.setToolTip(_("Perform case insensitive search (uses plocate -i)"))
         self.case_insensitive_checkbox.stateChanged.connect(self.run_search)
         search_options_layout.addWidget(self.case_insensitive_checkbox)
 
         main_layout.addLayout(search_options_layout)
 
-        # Filter input (regex)
+        # Filter input (regex) with icon
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText(_("Optional filter (regex)"))
+        self.filter_input.setPlaceholderText(_("Optional filter (regex pattern)"))
+        filter_icon = QIcon.fromTheme("view-list-details")
+        filter_action = QAction(filter_icon, "", self.filter_input)
+        # FIX: QLineEdit.ActionPosition.Leading -> QLineEdit.ActionPosition.LeadingPosition
+        self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
         self.filter_input.returnPressed.connect(self.run_search)
         main_layout.addWidget(self.filter_input)
 
@@ -152,9 +205,7 @@ class PlocateGUI(QWidget):
         self.result_table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
 
         header = self.result_table.horizontalHeader()
-        # Keep Interactive for manual resizing, though resizeEvent will override it dynamically
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        # Keep StretchLastSection so the 'Path' column fills the remaining space (60%)
         header.setStretchLastSection(True)
 
         self.result_table.setSortingEnabled(True)
@@ -169,28 +220,35 @@ class PlocateGUI(QWidget):
         info_label.setStyleSheet("color: gray; font-size: 11px;")
         main_layout.addWidget(info_label)
 
-        # --- CUSTOM EXCLUSION INPUT ---
+        # --- CUSTOM EXCLUSION INPUT with icon ---
         self.custom_exclude_input = QLineEdit()
         self.custom_exclude_input.setPlaceholderText(_("Paths to exclude (System DB only): E.g.: /mnt/backup /tmp"))
+        exclude_icon = QIcon.fromTheme("folder-close")
+        exclude_action = QAction(exclude_icon, "", self.custom_exclude_input)
+        # FIX: QLineEdit.ActionPosition.Leading -> QLineEdit.ActionPosition.LeadingPosition
+        self.custom_exclude_input.addAction(exclude_action, QLineEdit.ActionPosition.LeadingPosition)
         self.custom_exclude_input.setToolTip(
             _("Enter space-separated paths to exclude them from the main index (System DB).")
         )
         main_layout.addWidget(self.custom_exclude_input)
 
-        # --- UPDATE BUTTONS AND OPTIONS CONTAINER ---
+        # --- ACTION BUTTONS CONTAINER ---
         btn_layout = QHBoxLayout()
 
-        # Action Buttons
+        # Action Buttons with system icons
         self.open_file_btn = QPushButton(_("Open File"))
+        self.open_file_btn.setIcon(QIcon.fromTheme("document-open"))
         self.open_file_btn.clicked.connect(self.open_file)
         btn_layout.addWidget(self.open_file_btn)
 
         self.open_path_btn = QPushButton(_("Open Folder"))
+        self.open_path_btn.setIcon(QIcon.fromTheme("folder-open"))
         self.open_path_btn.clicked.connect(self.open_path)
         btn_layout.addWidget(self.open_path_btn)
 
-        # Single Update Button
+        # Update Button with system icon
         self.unified_update_btn = QPushButton(_("Update Database"))
+        self.unified_update_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.unified_update_btn.setToolTip(_("Select which database(s) you wish to update."))
         self.unified_update_btn.clicked.connect(self.update_unified_database)
         btn_layout.addWidget(self.unified_update_btn)
@@ -225,7 +283,7 @@ class PlocateGUI(QWidget):
         # 0. Get the visible width of the table's viewport
         table_width = self.result_table.viewport().width()
         if table_width <= 0:
-            return  # Avoid errors or incorrect calculations
+            return
 
         # 1. Calculate the target width (40% of the table)
         target_width = int(table_width * self.RESPONSIVE_WIDTH_PERCENTAGE)
@@ -293,6 +351,9 @@ class PlocateGUI(QWidget):
             if not filepath:
                 continue
 
+            # Heuristics: If path ends with separator or has no extension, assume directory
+            is_dir = filepath.endswith(os.path.sep) or not os.path.splitext(filepath)[1]
+
             if filepath == os.path.sep:
                 name = os.path.sep
                 parent = ""
@@ -303,11 +364,13 @@ class PlocateGUI(QWidget):
             if not parent:
                 parent = os.path.sep
 
-            display_rows.append((name, parent))
+            # Store (name, parent, is_dir)
+            display_rows.append((name, parent, is_dir))
 
         # Populate the table
         if not display_rows:
-            self.model.set_data([(_("No results found"), "")])
+            # Note: Must pass 3 elements (name, path, is_dir) even for the info row
+            self.model.set_data([(_("No results found"), "", False)])
         else:
             self.model.set_data(display_rows)
 
@@ -322,29 +385,30 @@ class PlocateGUI(QWidget):
         self._apply_responsive_column_sizing()
 
     def get_selected_row_data(self):
-        """Gets the Name and Path of the selected row via the model."""
+        """Gets the Name, Path, and is_dir of the selected row via the model."""
         selection_model = self.result_table.selectionModel()
         indexes = selection_model.selectedRows()
 
         if not indexes:
-            return None, None
+            return None, None, False
 
         model_index = indexes[0]
         row = model_index.row()
 
-        name_index = self.model.index(row, 0)
-        path_index = self.model.index(row, 1)
-
-        name = self.model.data(name_index, Qt.ItemDataRole.DisplayRole)
-        path = self.model.data(path_index, Qt.ItemDataRole.DisplayRole)
+        try:
+            # Retrieve the full tuple (name, path, is_dir)
+            name, path, is_dir = self.model._data[row]
+        except IndexError:
+            return None, None, False
 
         if name == _("No results found"):
-            return None, None
+            return None, None, False
 
-        return name, path
+        return name, path, is_dir
 
     def open_file(self):
-        name, path = self.get_selected_row_data()
+        # Unpack 3 elements
+        name, path, is_dir = self.get_selected_row_data()
         if not name or not path:
             QMessageBox.information(self, _("Info"), _("Please select a valid result row."))
             return
@@ -353,12 +417,16 @@ class PlocateGUI(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(full_path))
 
     def open_path(self):
-        name, path = self.get_selected_row_data()
+        # Unpack 3 elements
+        name, path, is_dir = self.get_selected_row_data()
         if not name or not path:
             QMessageBox.information(self, _("Info"), _("Please select a valid result row."))
             return
 
-        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        # If it's a directory, open its full path; if it's a file, open the parent path ('path')
+        path_to_open = os.path.join(path, name) if is_dir else path
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path_to_open))
 
     def keyPressEvent(self, event):
         """Handle global key press events."""
@@ -447,25 +515,33 @@ class PlocateGUI(QWidget):
         choice.setInformativeText(_("This operation requires root privileges and may take some time."))
 
         # Create the custom checkbox
-        # Include a placeholder for the MEDIA_SCAN_PATH for clarity
         media_checkbox = QCheckBox(_("Include external media ({path})").format(path=MEDIA_SCAN_PATH), choice)
-        media_checkbox.setChecked(True)  # Default to checked
+        media_checkbox.setChecked(True)
 
         # Insert the checkbox into the QMessageBox layout
-        # We need to access the layout to add a custom widget before the buttons
         layout = choice.layout()
         row_count = layout.rowCount()
-
         # Add the checkbox just before the button row, spanning all columns
         layout.addWidget(media_checkbox, row_count, 0, 1, layout.columnCount())
 
-        # Set standard OK/Cancel buttons.
-        choice.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        choice.setDefaultButton(QMessageBox.StandardButton.Ok)
+        # --- Custom Buttons with Icons for OK/Cancel ---
+        ok_button = QPushButton(_("OK"))
+        ok_button.setIcon(QIcon.fromTheme("dialog-ok-apply")) # Icon for confirmation
 
-        result = choice.exec()
+        cancel_button = QPushButton(_("Cancel"))
+        cancel_button.setIcon(QIcon.fromTheme("dialog-cancel")) # Icon for cancellation
 
-        if result == QMessageBox.StandardButton.Ok:
+        # Add custom buttons (this replaces the standard buttons in the dialog)
+        choice.addButton(ok_button, QMessageBox.ButtonRole.AcceptRole)
+        choice.addButton(cancel_button, QMessageBox.ButtonRole.RejectRole)
+        choice.setDefaultButton(QMessageBox.StandardButton.Ok) # Set default focus
+
+        # Execute the dialog
+        choice.exec()
+        clicked_button = choice.clickedButton()
+
+        # Check which button object was clicked
+        if clicked_button == ok_button:
             system_update = True
             media_update = media_checkbox.isChecked()
 
@@ -490,7 +566,7 @@ class PlocateGUI(QWidget):
                     self, _("Update Completed"), "\n".join(final_message)
                 )
         else:
-            # User clicked Cancel
+            # User clicked Cancel or closed the dialog
             QMessageBox.information(self, _("Info"), _("Database update cancelled."))
 
 
