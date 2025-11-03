@@ -3,7 +3,7 @@ import sys
 import subprocess
 import re
 import gettext
-import datetime # Import for date/time handling
+import datetime  # Import for date/time handling
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
@@ -81,6 +81,7 @@ class StatSignals(QObject):
     """Defines signals available from a running worker thread."""
     # Signal (path, size_str, date_str, success_bool)
     finished = pyqtSignal(str, str, str, bool)
+
 
 class StatWorker(QRunnable):
     """
@@ -398,7 +399,6 @@ class PlocateGUI(QWidget):
         self.status_label.setText(status_text)
     # ----------------------------------------------------
 
-
     def update_sort_state(self, logicalIndex):
         """Tracks the current sort state."""
         self.current_sort_column = logicalIndex
@@ -408,10 +408,14 @@ class PlocateGUI(QWidget):
         """Handles the double-click event. Opens the file or the containing folder."""
         column = index.column()
 
-        # Double-click on Name column (0) or Path column (1) defaults to opening the file
-        if column == 0 or column == 1:
+        # FIX: Distinguish between the 'Name' column (0) to open the file
+        # and the 'Path' column (1) to open the containing folder.
+        if column == 0:
             self.open_file()
+        elif column == 1:
+            self.open_path()
         else:
+            # Fallback for any other column, defaults to opening the file.
             self.open_file()
 
     def _apply_responsive_column_sizing(self):
