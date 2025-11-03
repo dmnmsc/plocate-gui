@@ -3,15 +3,18 @@ import sys
 import subprocess
 import re
 import gettext
+import datetime # Import for date/time handling
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
     QMenu  # Added for the context menu
 )
 from PyQt6.QtCore import (
-    Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl
+    Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
+    # New imports for non-blocking metadata fetching
+    QRunnable, QThreadPool, pyqtSignal, QObject
 )
-from PyQt6.QtGui import QDesktopServices, QIcon, QAction, QGuiApplication  # Added QGuiApplication for the clipboard
+from PyQt6.QtGui import QDesktopServices, QIcon, QAction, QGuiApplication
 import os
 
 # Set up gettext for internationalization, defaulting to English strings.
@@ -22,6 +25,16 @@ _ = gettext.gettext
 DEFAULT_DB_PATH = "/var/lib/plocate/plocate.db"
 MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
+
+
+# --- File Size Utility ---
+def human_readable_size(size, decimal_places=2):
+    """Converts bytes to a human-readable string (KB, MB, GB, etc.)."""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024.0:
+            break
+        size /= 1024.0
+    return f"{size:.{decimal_places}f} {unit}"
 
 
 # --- Icon Utility Function ---
@@ -61,6 +74,43 @@ def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
 
     # 3. Default Icon (Generic File)
     return QIcon.fromTheme("text-x-generic")
+
+
+# --- Stat Worker (for non-blocking os.stat) ---
+class StatSignals(QObject):
+    """Defines signals available from a running worker thread."""
+    # Signal (path, size_str, date_str, success_bool)
+    finished = pyqtSignal(str, str, str, bool)
+
+class StatWorker(QRunnable):
+    """
+    Runnable that performs os.stat on a path in a separate thread.
+    This prevents the GUI from freezing when accessing slow/unmounted drives.
+    """
+    def __init__(self, full_path):
+        super().__init__()
+        self.full_path = full_path
+        self.signals = StatSignals()
+
+    def run(self):
+        """The long-running task: getting file statistics."""
+        try:
+            # os.stat is the blocking call that might hang if the drive is unmounted
+            stat_result = os.stat(self.full_path)
+
+            # Format size
+            size_str = human_readable_size(stat_result.st_size)
+
+            # Format modification date
+            mod_time = datetime.datetime.fromtimestamp(stat_result.st_mtime)
+            mod_date_str = mod_time.strftime('%Y-%m-%d %H:%M:%S')
+
+            # Success: emit the formatted data
+            self.signals.finished.emit(self.full_path, size_str, mod_date_str, True)
+
+        except (FileNotFoundError, PermissionError, OSError):
+            # Failure: OSError catches timeouts or failures related to unmounted/inaccessible paths
+            self.signals.finished.emit(self.full_path, "", "", False)
 
 
 # Model implementation for QTableView
@@ -148,6 +198,11 @@ class PlocateGUI(QWidget):
         self.setWindowTitle(_("Plocate GUI"))
         self.resize(800, 550)
 
+        # New: Initialize ThreadPool for non-blocking operations
+        self.threadpool = QThreadPool()
+        # To track the path being currently processed by the worker (prevents race conditions)
+        self.current_stat_path = None
+
         # Try to load the application icon from the system theme
         icon = QIcon.fromTheme("plocate-gui")
         if icon.isNull():
@@ -216,6 +271,10 @@ class PlocateGUI(QWidget):
         header.sectionClicked.connect(self.update_sort_state)
         self.result_table.doubleClicked.connect(self.handle_double_click)
 
+        # CRITICAL FIX: We connect to currentChanged, which fires reliably on item focus change.
+        # We will use the index passed by the signal to get the row data directly.
+        self.result_table.selectionModel().currentChanged.connect(self.update_metadata_status)
+
         # --- Context Menu Setup (NEW) ---
         self.result_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.result_table.customContextMenuRequested.connect(self.show_context_menu)
@@ -223,11 +282,21 @@ class PlocateGUI(QWidget):
 
         main_layout.addWidget(self.result_table)
 
-        # Instructions/info label
-        info_label = QLabel(
-            _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu. Search automatically combines system and media databases if both exist."))
-        info_label.setStyleSheet("color: gray; font-size: 11px;")
-        main_layout.addWidget(info_label)
+        # Instructions/info label -> Replaced by dynamic status label
+        self.status_label = QLabel(
+            _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+        # --- STYLE BLOCK ---
+        self.status_label.setStyleSheet("""
+            QLabel {
+                /* Increased font size for slightly better readability */
+                font-size: 12px;
+                /* Light grey for good visibility on both dark and light themes */
+                color: #cccccc; 
+                padding: 4px 6px; 
+            }
+        """)
+        # --- END OF STYLE MODIFICATION ---
+        main_layout.addWidget(self.status_label)
 
         # --- CUSTOM EXCLUSION INPUT with icon and CLEAR BUTTON ---
         self.custom_exclude_input = QLineEdit()
@@ -265,6 +334,70 @@ class PlocateGUI(QWidget):
 
         main_layout.addLayout(btn_layout)
         self.setLayout(main_layout)
+
+    # --- NEW METADATA STATUS METHODS (NON-BLOCKING) ---
+    def update_metadata_status(self, current_index, previous_index):
+        """
+        Called when the table selection changes. Uses the current_index to reliably
+        fetch the selected row's metadata in a non-blocking thread.
+        """
+        # Set a temporary status message
+        self.status_label.setText(_("Fetching file metadata..."))
+
+        # Check if the index is valid and within bounds
+        row = current_index.row()
+        if not current_index.isValid() or row < 0 or row >= len(self.model._data):
+            # Restore default instruction text if the index is invalid
+            self.status_label.setText(
+                _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+            return
+
+        try:
+            # FIX: Get the data tuple (name, path, is_dir) directly from the model's internal list using the row index
+            name, path, is_dir = self.model._data[row]
+        except IndexError:
+            self.status_label.setText(
+                _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+            return
+
+        if name == _("No results found"):
+            self.status_label.setText(
+                _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+            return
+
+        full_path = os.path.join(path, name)
+
+        # Track the path being processed to ignore results from older selections
+        self.current_stat_path = full_path
+
+        # Create and start the worker thread
+        worker = StatWorker(full_path)
+        worker.signals.finished.connect(self.display_metadata)
+
+        # Start execution in the thread pool
+        self.threadpool.start(worker)
+
+    def display_metadata(self, path, size_str, mod_date_str, success):
+        """
+        Slot to receive data from the StatWorker and update the status bar.
+        This runs on the main GUI thread.
+        """
+        # CRITICAL: Only update if this result matches the latest selected path
+        if path != self.current_stat_path:
+            return
+
+        if success:
+            # Display only Size and Modified Date
+            status_text = _("Size: {size} | Modified: {date}").format(
+                size=size_str, date=mod_date_str
+            )
+        else:
+            # Format and display the error message for inaccessible files
+            status_text = _("File not accessible (Disk unmounted or I/O error).")
+
+        self.status_label.setText(status_text)
+    # ----------------------------------------------------
+
 
     def update_sort_state(self, logicalIndex):
         """Tracks the current sort state."""
@@ -355,7 +488,6 @@ class PlocateGUI(QWidget):
             if len(keywords) > 1:
                 # If multiple space-separated keywords are found, build an AND regex
                 # using lookahead assertions: (?=.*keyword1)(?=.*keyword2).*
-                # This ensures all keywords are present, regardless of order.
 
                 # IMPORTANT: Escape all keywords for safety, as they are not meant to be regex patterns
                 escaped_keywords = [re.escape(k) for k in keywords]
@@ -369,17 +501,11 @@ class PlocateGUI(QWidget):
 
             # Now apply the constructed (or direct) regex filter
             try:
-                # Use re.IGNORECASE flag if plocate was case-insensitive,
-                # although plocate handles case. Applying the filter to the output
-                # should match the plocate flags if possible.
-                # Since plocate already did the initial search, we typically don't
-                # need to re-apply case insensitivity here unless the filter needs it too.
                 # Sticking to simple regex matching on output lines for simplicity.
                 regex = re.compile(final_filter_pattern)
                 files = [f for f in files if regex.search(f)]
             except re.error:
-                QMessageBox.warning(self, _("Error"),
-                                    _("Filter contains an invalid regex pattern, or multi-keyword conversion failed."))
+                QMessageBox.warning(self, _("Error"), _("Filter contains an invalid regex pattern, or multi-keyword conversion failed."))
                 return
 
         display_rows = []
@@ -408,6 +534,9 @@ class PlocateGUI(QWidget):
         if not display_rows:
             # Note: Must pass 3 elements (name, path, is_dir) even for the info row
             self.model.set_data([(_("No results found"), "", False)])
+            # Clear metadata status
+            self.status_label.setText(
+                _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
         else:
             self.model.set_data(display_rows)
 
