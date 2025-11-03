@@ -3,7 +3,7 @@ import sys
 import subprocess
 import re
 import gettext
-import datetime  # Import for date/time handling
+import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
@@ -833,10 +833,11 @@ class PlocateGUI(QWidget):
 
 
 if __name__ == "__main__":
+    # Set the application name for system monitor/taskbar
+    QApplication.setApplicationName("Plocate GUI")
+    QApplication.setApplicationDisplayName("Plocate GUI")
+    QApplication.setDesktopFileName("Plocate GUI")
     app = QApplication(sys.argv)
-    # Set translation for '_' to work correctly.
-    # This is essential for language handling in desktop environments.
-
     window = PlocateGUI()
     window.show()
     sys.exit(app.exec())
