@@ -5,12 +5,13 @@ import re
 import gettext
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
-    QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox
+    QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
+    QMenu  # Added for the context menu
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl
 )
-from PyQt6.QtGui import QDesktopServices, QIcon, QAction
+from PyQt6.QtGui import QDesktopServices, QIcon, QAction, QGuiApplication  # Added QGuiApplication for the clipboard
 import os
 
 # Set up gettext for internationalization, defaulting to English strings.
@@ -172,7 +173,7 @@ class PlocateGUI(QWidget):
         self.search_input.setPlaceholderText(_("Enter search term..."))
         search_icon = QIcon.fromTheme("edit-find")
         search_action = QAction(search_icon, "", self.search_input)
-        # FIX: Ensure compatibility with PyQt6 ActionPosition enumeration
+        # Ensure compatibility with PyQt6 ActionPosition enumeration
         self.search_input.addAction(search_action, QLineEdit.ActionPosition.LeadingPosition)
         self.search_input.returnPressed.connect(self.run_search)
         self.search_input.setClearButtonEnabled(True)
@@ -192,7 +193,7 @@ class PlocateGUI(QWidget):
         self.filter_input.setPlaceholderText(_("Optional filter (regex pattern)"))
         filter_icon = QIcon.fromTheme("view-list-details")
         filter_action = QAction(filter_icon, "", self.filter_input)
-        # FIX: Ensure compatibility with PyQt6 ActionPosition enumeration
+        # Ensure compatibility with PyQt6 ActionPosition enumeration
         self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
         self.filter_input.returnPressed.connect(self.run_search)
         self.filter_input.setClearButtonEnabled(True)
@@ -215,11 +216,16 @@ class PlocateGUI(QWidget):
         header.sectionClicked.connect(self.update_sort_state)
         self.result_table.doubleClicked.connect(self.handle_double_click)
 
+        # --- Context Menu Setup (NEW) ---
+        self.result_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.result_table.customContextMenuRequested.connect(self.show_context_menu)
+        # -----------------------------------
+
         main_layout.addWidget(self.result_table)
 
         # Instructions/info label
         info_label = QLabel(
-            _("Double click to open. Search automatically combines system and media databases if both exist."))
+            _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu. Search automatically combines system and media databases if both exist."))
         info_label.setStyleSheet("color: gray; font-size: 11px;")
         main_layout.addWidget(info_label)
 
@@ -228,7 +234,7 @@ class PlocateGUI(QWidget):
         self.custom_exclude_input.setPlaceholderText(_("Paths to exclude (System DB only): E.g.: /mnt/backup /tmp"))
         exclude_icon = QIcon.fromTheme("folder-close")
         exclude_action = QAction(exclude_icon, "", self.custom_exclude_input)
-        # FIX: Ensure compatibility with PyQt6 ActionPosition enumeration
+        # Ensure compatibility with PyQt6 ActionPosition enumeration
         self.custom_exclude_input.addAction(exclude_action, QLineEdit.ActionPosition.LeadingPosition)
         self.custom_exclude_input.setToolTip(
             _("Enter space-separated paths to exclude them from the main index (System DB).")
@@ -269,10 +275,9 @@ class PlocateGUI(QWidget):
         """Handles the double-click event. Opens the file or the containing folder."""
         column = index.column()
 
-        if column == 0:
+        # Double-click on Name column (0) or Path column (1) defaults to opening the file
+        if column == 0 or column == 1:
             self.open_file()
-        elif column == 1:
-            self.open_path()
         else:
             self.open_file()
 
@@ -410,6 +415,30 @@ class PlocateGUI(QWidget):
 
         return name, path, is_dir
 
+    # --- NEW COPY METHODS ---
+    def copy_file_name(self):
+        """Copies the file/folder name (only) to the clipboard."""
+        name, path, is_dir = self.get_selected_row_data()
+        if not name:
+            QMessageBox.information(self, _("Info"), _("Please select a valid result row to copy."))
+            return
+
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(name)
+
+    def copy_full_path(self):
+        """Copies the complete path (path + name) to the clipboard."""
+        name, path, is_dir = self.get_selected_row_data()
+        if not name or not path:
+            QMessageBox.information(self, _("Info"), _("Please select a valid result row to copy."))
+            return
+
+        full_path = os.path.join(path, name)
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(full_path)
+
+    # ------------------------------------
+
     def open_file(self):
         """Opens the selected file/directory using the system's default handler."""
         # Unpack 3 elements
@@ -434,16 +463,79 @@ class PlocateGUI(QWidget):
 
         QDesktopServices.openUrl(QUrl.fromLocalFile(path_to_open))
 
+    # --- METHOD TO SHOW CONTEXT MENU (NEW) ---
+    def show_context_menu(self, pos):
+        """Displays the context menu at the given position if a row is selected."""
+        selected_rows = self.result_table.selectionModel().selectedRows()
+
+        # Only show menu if a row is selected
+        if not selected_rows:
+            return
+
+        menu = QMenu(self)
+
+        # 1. Open File
+        action_open_file = menu.addAction(QIcon.fromTheme("document-open"), _("Open File (Enter)"))
+        action_open_file.triggered.connect(self.open_file)
+
+        # 2. Open Path
+        action_open_path = menu.addAction(QIcon.fromTheme("folder-open"), _("Open Folder (Ctrl+Enter)"))
+        action_open_path.triggered.connect(self.open_path)
+
+        menu.addSeparator()
+
+        # 3. Copy File Name
+        action_copy_name = menu.addAction(QIcon.fromTheme("edit-copy"), _("Copy File Name"))
+        action_copy_name.triggered.connect(self.copy_file_name)
+
+        # 4. Copy Full Path (was "copy path" in request)
+        action_copy_path = menu.addAction(QIcon.fromTheme("edit-copy"), _("Copy Full Path"))
+        action_copy_path.triggered.connect(self.copy_full_path)
+
+        # Shows the menu at the global mouse position
+        menu.exec(self.result_table.mapToGlobal(pos))
+
+    # ----------------------------------------------------
+
     def keyPressEvent(self, event):
-        """Handle global key press events."""
-        # Handle F5 for database update
-        if event.key() == Qt.Key.Key_F5:
+        """
+        Handle global key press events, prioritizing search result actions
+        (Enter/Ctrl+Enter) when a row is selected.
+        """
+        selected_rows = self.result_table.selectionModel().selectedRows()
+        key = event.key()
+        modifiers = event.modifiers()
+        is_enter = key in [Qt.Key.Key_Return, Qt.Key.Key_Enter]
+
+        # 1. Handle Ctrl + Enter (Opens Path) - PRIORITY
+        if is_enter and (modifiers & Qt.KeyboardModifier.ControlModifier) and selected_rows:
+            self.open_path()
+            event.accept()
+            return
+
+        # 2. Handle Enter/Return key press (Opens File) - DEFAULT
+        elif is_enter and selected_rows:
+            # Check explicitly that the Control key is NOT pressed to avoid
+            # interference with Ctrl+Enter, which may fall through here.
+            if not (modifiers & Qt.KeyboardModifier.ControlModifier):
+                self.open_file()
+                event.accept()
+                return
+
+        # 3. Handle F5 for database update
+        elif key == Qt.Key.Key_F5:
             self.update_unified_database()
-        # Handle Escape key to close the application
-        elif event.key() == Qt.Key.Key_Escape:
+            event.accept()
+            return
+
+        # 4. Handle Escape key to close the application
+        elif key == Qt.Key.Key_Escape:
             self.close()
-        else:
-            super().keyPressEvent(event)
+            event.accept()
+            return
+
+        # Default behavior
+        super().keyPressEvent(event)
 
     def run_updatedb_command(self, update_command, message):
         """Helper function to execute the updatedb command. Returns success (True/False)."""
@@ -506,7 +598,7 @@ class PlocateGUI(QWidget):
         # Command: pkexec updatedb -o /var/lib/plocate/media.db -U /run/media
         update_command = ["pkexec", "updatedb", "-o", MEDIA_DB_PATH, "-U", MEDIA_SCAN_PATH]
 
-        message = _("Media DB update started (Indexing {path}).").format(path=MEDIA_SCAN_PATH)
+        message = _("Media DB update started (Indexing {path})").format(path=MEDIA_SCAN_PATH)
 
         return self.run_updatedb_command(update_command, message)
 
@@ -536,15 +628,15 @@ class PlocateGUI(QWidget):
 
         # --- Custom Buttons with Icons for OK/Cancel ---
         ok_button = QPushButton(_("OK"))
-        ok_button.setIcon(QIcon.fromTheme("dialog-ok-apply")) # Icon for confirmation
+        ok_button.setIcon(QIcon.fromTheme("dialog-ok-apply"))  # Icon for confirmation
 
         cancel_button = QPushButton(_("Cancel"))
-        cancel_button.setIcon(QIcon.fromTheme("dialog-cancel")) # Icon for cancellation
+        cancel_button.setIcon(QIcon.fromTheme("dialog-cancel"))  # Icon for cancellation
 
         # Add custom buttons (this replaces the standard buttons in the dialog)
         choice.addButton(ok_button, QMessageBox.ButtonRole.AcceptRole)
         choice.addButton(cancel_button, QMessageBox.ButtonRole.RejectRole)
-        choice.setDefaultButton(QMessageBox.StandardButton.Ok) # Set default focus
+        choice.setDefaultButton(QMessageBox.StandardButton.Ok)  # Set default focus
 
         # Execute the dialog
         choice.exec()
