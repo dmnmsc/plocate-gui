@@ -286,7 +286,9 @@ class PlocateGUI(QWidget):
         # Instructions/info label -> Replaced by dynamic status label
         self.status_label = QLabel(
             _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
-        self.status_label.setToolTip(self.status_label.text())
+        # Use the new utility method for initial setup
+        self.update_status_display(self.status_label.text())
+
         # --- STYLE BLOCK ---
         self.status_label.setStyleSheet("""
             QLabel {
@@ -335,6 +337,12 @@ class PlocateGUI(QWidget):
         main_layout.addLayout(btn_layout)
         self.setLayout(main_layout)
 
+    # --- STATUS LABEL UTILITY METHOD (NEW) ---
+    def update_status_display(self, text: str):
+        """Sets the status label text and automatically sets the tooltip to the same text."""
+        self.status_label.setText(text)
+        self.status_label.setToolTip(text)
+
     # --- NEW METADATA STATUS METHODS (NON-BLOCKING) ---
     def update_metadata_status(self, current_index, previous_index):
         """
@@ -342,28 +350,28 @@ class PlocateGUI(QWidget):
         fetch the selected row's metadata in a non-blocking thread.
         """
         # Set a temporary status message
-        self.status_label.setText(_("Fetching file metadata..."))
-        self.status_label.setToolTip(self.status_label.text())
+        self.update_status_display(_("Fetching file metadata..."))
 
         # Check if the index is valid and within bounds
         row = current_index.row()
+        default_instructions = _(
+            "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."
+        )
+
         if not current_index.isValid() or row < 0 or row >= len(self.model._data):
             # Restore default instruction text if the index is invalid
-            self.status_label.setText(
-                _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+            self.update_status_display(default_instructions)
             return
 
         try:
             # FIX: Get the data tuple (name, path, is_dir) directly from the model's internal list using the row index
             name, path, is_dir = self.model._data[row]
         except IndexError:
-            self.status_label.setText(
-                _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+            self.update_status_display(default_instructions)
             return
 
         if name == _("No results found"):
-            self.status_label.setText(
-                _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+            self.update_status_display(default_instructions)
             return
 
         full_path = os.path.join(path, name)
@@ -396,8 +404,7 @@ class PlocateGUI(QWidget):
             # Format and display the error message for inaccessible files
             status_text = _("File not accessible (Disk unmounted or I/O error).")
 
-        self.status_label.setText(status_text)
-        self.status_label.setToolTip(self.status_label.text())
+        self.update_status_display(status_text)
 
     # ----------------------------------------------------
 
@@ -455,9 +462,13 @@ class PlocateGUI(QWidget):
         term = self.search_input.text().strip()
         raw_filter_pattern = self.filter_input.text().strip()
         final_filter_pattern = ""
+        default_instructions = _(
+            "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."
+        )
 
         if not term:
             self.model.set_data([])
+            self.update_status_display(default_instructions)
             return
 
         # 1. Build the base plocate command
@@ -541,8 +552,7 @@ class PlocateGUI(QWidget):
             # Note: Must pass 3 elements (name, path, is_dir) even for the info row
             self.model.set_data([(_("No results found"), "", False)])
             # Clear metadata status
-            self.status_label.setText(
-                _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+            self.update_status_display(default_instructions)
         else:
             self.model.set_data(display_rows)
 
