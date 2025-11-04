@@ -161,12 +161,21 @@ class PlocateResultsModel(QAbstractTableModel):
 
         # 2. Decoration Role (Icon) - Only for the 'Name' column
         if role == Qt.ItemDataRole.DecorationRole and col == 0:
+            # Note: We pass the joined path and is_dir to get the correct icon
             full_path = os.path.join(path, name)
             return get_icon_for_file_type(full_path, is_dir)
 
-        # 3. ToolTip Role
+        # 3. ToolTip Role (Specific logic for Name vs. Path)
         if role == Qt.ItemDataRole.ToolTipRole:
-            return os.path.join(path, name)
+            if col == 0: # Name column
+                # Tooltip for the name column is just the name
+                return name
+            elif col == 1: # Path column
+                # Tooltip for the path column is the full path
+                return os.path.join(path, name)
+            else:
+                # Fallback for other potential columns (if they were added later)
+                return QVariant()
 
         return QVariant()
 
