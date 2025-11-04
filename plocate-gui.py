@@ -286,6 +286,7 @@ class PlocateGUI(QWidget):
         # Instructions/info label -> Replaced by dynamic status label
         self.status_label = QLabel(
             _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+        self.status_label.setToolTip(self.status_label.text())
         # --- STYLE BLOCK ---
         self.status_label.setStyleSheet("""
             QLabel {
@@ -342,6 +343,7 @@ class PlocateGUI(QWidget):
         """
         # Set a temporary status message
         self.status_label.setText(_("Fetching file metadata..."))
+        self.status_label.setToolTip(self.status_label.text())
 
         # Check if the index is valid and within bounds
         row = current_index.row()
@@ -395,6 +397,8 @@ class PlocateGUI(QWidget):
             status_text = _("File not accessible (Disk unmounted or I/O error).")
 
         self.status_label.setText(status_text)
+        self.status_label.setToolTip(self.status_label.text())
+
     # ----------------------------------------------------
 
     def update_sort_state(self, logicalIndex):
