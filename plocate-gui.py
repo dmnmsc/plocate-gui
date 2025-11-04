@@ -291,9 +291,7 @@ class PlocateGUI(QWidget):
             QLabel {
                 /* Increased font size for slightly better readability */
                 font-size: 12px;
-                /* Light grey for good visibility on both dark and light themes */
-                color: #cccccc; 
-                padding: 4px 6px; 
+                padding: 4px 6px;
             }
         """)
         # --- END OF STYLE MODIFICATION ---
