@@ -172,7 +172,7 @@ class PlocateResultsModel(QAbstractTableModel):
                 return name
             elif col == 1: # Path column
                 # Tooltip for the path column is the full path
-                return os.path.join(path, name)
+                return path
             else:
                 # Fallback for other potential columns (if they were added later)
                 return QVariant()
