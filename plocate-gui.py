@@ -7,7 +7,7 @@ import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
-    QMenu  # Added for the context menu
+    QMenu, QProgressBar  # QProgressBar added
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
@@ -88,6 +88,7 @@ class StatWorker(QRunnable):
     Runnable that performs os.stat on a path in a separate thread.
     This prevents the GUI from freezing when accessing slow/unmounted drives.
     """
+
     def __init__(self, full_path):
         super().__init__()
         self.full_path = full_path
@@ -112,6 +113,58 @@ class StatWorker(QRunnable):
         except (FileNotFoundError, PermissionError, OSError):
             # Failure: OSError catches timeouts or failures related to unmounted/inaccessible paths
             self.signals.finished.emit(self.full_path, "", "", False)
+
+
+# --- Update DB Worker (for non-blocking updatedb) ---
+class UpdateDBSignals(QObject):
+    """Defines signals for the UpdateDBWorker."""
+    started = pyqtSignal()
+    # Signal (success, message, db_type)
+    finished = pyqtSignal(bool, str, str)
+
+
+class UpdateDBWorker(QRunnable):
+    """Runnable that performs pkexec updatedb in a separate thread."""
+
+    def __init__(self, update_command, db_type):
+        super().__init__()
+        self.update_command = update_command
+        self.db_type = db_type
+        self.signals = UpdateDBSignals()
+
+    def run(self):
+        self.signals.started.emit()
+        try:
+            # NOTE: subprocess.run is in the worker thread, so the UI won't freeze.
+            # If pkexec asks for a password, the dialog should still appear on the main screen.
+            result = subprocess.run(
+                self.update_command,
+                text=True,
+                capture_output=True,
+                check=True
+            )
+            # Success
+            self.signals.finished.emit(True, result.stdout, self.db_type)
+
+        except subprocess.CalledProcessError as e:
+            # Failure (non-zero exit status)
+            error_details = e.stderr or e.stdout or _("No detailed error message was returned.")
+            full_error_message = (
+                    _("Command: ") + " ".join(self.update_command) +
+                    _("\nExit Status: ") + str(e.returncode) +
+                    _("\nDetails: \n") + error_details.strip()
+            )
+            self.signals.finished.emit(False, full_error_message, self.db_type)
+
+        except FileNotFoundError:
+            # Failure (pkexec not found)
+            self.signals.finished.emit(False,
+                                       _("The 'pkexec' command was not found. "
+                                         "Please ensure 'polkit' is installed and configured."), self.db_type
+                                       )
+        except Exception as e:
+            # Catch all other exceptions
+            self.signals.finished.emit(False, _("An unexpected error occurred: ") + str(e), self.db_type)
 
 
 # Model implementation for QTableView
@@ -167,10 +220,10 @@ class PlocateResultsModel(QAbstractTableModel):
 
         # 3. ToolTip Role (Specific logic for Name vs. Path)
         if role == Qt.ItemDataRole.ToolTipRole:
-            if col == 0: # Name column
+            if col == 0:  # Name column
                 # Tooltip for the name column is just the name
                 return name
-            elif col == 1: # Path column
+            elif col == 1:  # Path column
                 # Tooltip for the path column is the full path
                 return path
             else:
@@ -298,6 +351,31 @@ class PlocateGUI(QWidget):
         # Use the new utility method for initial setup
         self.update_status_display(self.status_label.text())
 
+        # --- NEW: Indeterminate Progress Bar for non-blocking operations ---
+        self.progress_bar = QProgressBar()
+        # Set to indeterminate mode
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFixedHeight(10)
+        # Initially hidden
+        self.progress_bar.hide()
+        self.progress_bar.setFormat(_("Updating database..."))
+
+        # >>> START OF THE CORRECTED LAYOUT SOLUTION (Bar Adjacent to Text) <<<
+        status_bar_layout = QHBoxLayout()
+        status_bar_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 1. Status Label: Takes only the space needed for its text.
+        status_bar_layout.addWidget(self.status_label)
+
+        # 2. Progress Bar: Starts immediately after the status label text.
+        status_bar_layout.addWidget(self.progress_bar)
+
+        # Add the horizontal layout to the main vertical layout
+        main_layout.addLayout(status_bar_layout)
+
+        # -------------------------------------------------------------------
+
         # --- STYLE BLOCK ---
         self.status_label.setStyleSheet("""
             QLabel {
@@ -306,8 +384,6 @@ class PlocateGUI(QWidget):
                 padding: 4px 6px;
             }
         """)
-        # --- END OF STYLE MODIFICATION ---
-        main_layout.addWidget(self.status_label)
 
         # --- CUSTOM EXCLUSION INPUT with icon and CLEAR BUTTON ---
         self.custom_exclude_input = QLineEdit()
@@ -719,79 +795,138 @@ class PlocateGUI(QWidget):
         # Default behavior
         super().keyPressEvent(event)
 
-    def run_updatedb_command(self, update_command, message):
-        """Helper function to execute the updatedb command. Returns success (True/False)."""
-        # The user will rely on the final success/error dialogs shown in the calling function.
+    # -------------------------------------------------------------------------
+    # --- NON-BLOCKING DATABASE UPDATE LOGIC (REPLACEMENT FOR OLD METHODS) ---
+    # -------------------------------------------------------------------------
 
-        try:
-            # Execute the command
-            subprocess.run(
-                update_command,
-                text=True,
-                capture_output=True,
-                check=True
+    def set_ui_updating_state(self, is_updating: bool):
+        """Sets the state of buttons and inputs during database update, managing the progress indicator."""
+
+        # Disable/Enable all relevant input/action widgets
+        is_disabled = is_updating
+        self.search_input.setDisabled(is_disabled)
+        self.filter_input.setDisabled(is_disabled)
+        self.custom_exclude_input.setDisabled(is_disabled)
+        self.case_insensitive_checkbox.setDisabled(is_disabled)
+        self.open_file_btn.setDisabled(is_disabled)
+        self.open_path_btn.setDisabled(is_disabled)
+        self.unified_update_btn.setDisabled(is_disabled)
+
+        # Toggle visibility of the status label and the progress bar
+        if is_updating:
+            # 1. The status label remains visible and shows the progress message
+            self.update_status_display(_("Database update in progress... Please wait."))
+
+            # 2. Show the progress bar (which now fills the remaining space next to the text)
+            self.progress_bar.setFormat(_("Updating database..."))
+            self.progress_bar.show()
+
+        else:
+            # 1. Hide the progress bar
+            self.progress_bar.hide()
+
+            # 2. Restore the default instruction text (which was always visible)
+            default_instructions = _(
+                "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."
             )
-            return True
-        except subprocess.CalledProcessError as e:
-            error_details = e.stderr or e.stdout or _("No detailed error message was returned.")
+            self.update_status_display(default_instructions)
+
+    def handle_db_update_start(self):
+        """Called by a DB worker's signal when it starts."""
+        # The UI is already blocked by the call to set_ui_updating_state(True)
+        # We could add more complex visual feedback here if needed, but the progress bar handles it.
+        pass
+
+    def handle_db_update_finish(self, success: bool, message: str, db_type: str):
+        """Called by a DB worker's signal when it finishes."""
+
+        if success:
+            # Show a brief success message
+            QMessageBox.information(
+                self,
+                _("Update Completed"),
+                _("{db_type} database updated successfully.").format(db_type=db_type)
+            )
+        else:
             full_error_message = (
-                    _("Could not update database:\n") +
-                    _("Command: ") + " ".join(update_command) +
-                    _("\nExit Status: ") + str(e.returncode) +
-                    _("\nDetails: \n") + error_details.strip()
+                    _("Could not update {db_type} database.\n").format(db_type=db_type) +
+                    _("Details: \n") + message
             )
-            # Use critical for errors
             QMessageBox.critical(self, _("Update Error"), full_error_message)
-            return False
-        except FileNotFoundError:
-            QMessageBox.critical(self, _("Execution Error"),
-                                 _("The 'pkexec' command was not found. "
-                                   "Please ensure 'polkit' is installed and configured."))
-            return False
 
-    def update_system_database(self):
-        """Updates the main (System) database, respecting custom exclusions."""
+    def run_update_worker(self, update_command, db_type: str, next_step_fn=None):
+        """Initializes and starts a new UpdateDBWorker in the thread pool."""
+
+        # Set UI state to updating immediately on the main thread (block buttons and show progress bar)
+        self.set_ui_updating_state(True)
+
+        worker = UpdateDBWorker(update_command, db_type)
+
+        # Connect signals
+        worker.signals.started.connect(self.handle_db_update_start)
+
+        # Signal to handle the final result and optionally call the next step
+        def on_finish(success, message, finished_db_type):
+            self.handle_db_update_finish(success, message, finished_db_type)
+
+            # --- Sequence and Final UI Restoration Logic ---
+            if success and next_step_fn:
+                # Success and there is a next step (Media DB), call it.
+                next_step_fn()
+            elif not success or not next_step_fn:
+                # Failure OR success and no next step (i.e., this is the last step).
+                # In both cases, restore the UI state now.
+                self.set_ui_updating_state(False)
+
+        worker.signals.finished.connect(on_finish)
+
+        # Start the worker
+        self.threadpool.start(worker)
+
+    def update_system_database(self, next_step_fn=None):
+        """Starts the system DB update worker, respecting custom exclusions."""
+
         update_command = ["pkexec", "updatedb"]
         exclusion_paths = []
-        messages = []
 
-        # 1. Check custom exclusion paths
         custom_excludes_text = self.custom_exclude_input.text().strip()
         if custom_excludes_text:
             custom_paths = [p.strip() for p in custom_excludes_text.split() if p.strip()]
             if custom_paths:
                 exclusion_paths.extend(custom_paths)
-                messages.append(_("excluding custom paths"))
 
         if exclusion_paths:
             update_command.append("-e")
             update_command.extend(exclusion_paths)
 
-            message_suffix = ", ".join(messages)
-            message = _("System DB update started ({s}).").format(s=message_suffix)
-        else:
-            message = _("System DB update started (using default configuration).")
-
-        return self.run_updatedb_command(update_command, message)
+        self.run_update_worker(update_command, _("System"), next_step_fn)
 
     def update_media_database(self):
-        """Creates or updates the secondary database for /run/media."""
+        """Starts the media DB update worker."""
 
         # Command: pkexec updatedb -o /var/lib/plocate/media.db -U /run/media
         update_command = ["pkexec", "updatedb", "-o", MEDIA_DB_PATH, "-U", MEDIA_SCAN_PATH]
 
-        message = _("Media DB update started (Indexing {path})").format(path=MEDIA_SCAN_PATH)
-
-        return self.run_updatedb_command(update_command, message)
+        # When media update finishes, we must restore the UI state, so we pass None
+        # as the next_step_fn, letting the on_finish logic restore the UI.
+        self.run_update_worker(
+            update_command,
+            _("Media")
+        )
 
     def update_unified_database(self):
         """
         Shows a dialog to confirm update and optionally include external media.
+        Launches workers to perform updates in a non-blocking way.
         """
+
+        # If an update is already in progress, do nothing
+        if self.search_input.isEnabled() is False:
+            QMessageBox.information(self, _("Info"), _("A database update is already in progress."))
+            return
 
         choice = QMessageBox(self)
         choice.setWindowTitle(_("Update Database"))
-
         # Add HTML line breaks to the main text to separate it visually from the informative text
         main_text = _("Are you sure you want to update the System database?") + "<br>"
         choice.setText(main_text)
@@ -828,26 +963,12 @@ class PlocateGUI(QWidget):
         if clicked_button == ok_button:
             media_update = media_checkbox.isChecked()
 
-            final_message = []
-
-            # 1. Update System DB (Mandatory if OK is pressed)
-            if self.update_system_database():
-                final_message.append(_("System database updated successfully."))
-            else:
-                return  # Error message already shown
-
-            # 2. Update Media DB (Conditional on checkbox)
             if media_update:
-                if self.update_media_database():
-                    final_message.append(_("Media database updated successfully."))
-                else:
-                    return  # Error message already shown
-
-            # 3. Final Success
-            if final_message:
-                QMessageBox.information(
-                    self, _("Update Completed"), "\n".join(final_message)
-                )
+                # 1. Start System DB update. If successful, it automatically calls self.update_media_database.
+                self.update_system_database(next_step_fn=self.update_media_database)
+            else:
+                # 1. Start System DB update. It will restore the UI state when finished.
+                self.update_system_database(next_step_fn=None)
         else:
             # User clicked Cancel or closed the dialog
             QMessageBox.information(self, _("Info"), _("Database update cancelled."))
