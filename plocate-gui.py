@@ -347,7 +347,7 @@ class PlocateGUI(QWidget):
 
         # Instructions/info label -> Replaced by dynamic status label
         self.status_label = QLabel(
-            _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."))
+            _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+T opens path in terminal. Right-click for menu."))
         # Use the new utility method for initial setup
         self.update_status_display(self.status_label.text())
 
@@ -404,18 +404,30 @@ class PlocateGUI(QWidget):
         # Action Buttons with system icons
         self.open_file_btn = QPushButton(_("Open File"))
         self.open_file_btn.setIcon(QIcon.fromTheme("document-open"))
+        self.open_file_btn.setToolTip("ENTER")
+        self.open_file_btn.setToolTipDuration(1500)
         self.open_file_btn.clicked.connect(self.open_file)
         btn_layout.addWidget(self.open_file_btn)
 
         self.open_path_btn = QPushButton(_("Open Folder"))
         self.open_path_btn.setIcon(QIcon.fromTheme("folder-open"))
+        self.open_path_btn.setToolTip("CTRL+ENTER")
+        self.open_path_btn.setToolTipDuration(1500)
         self.open_path_btn.clicked.connect(self.open_path)
         btn_layout.addWidget(self.open_path_btn)
+
+        self.open_in_terminal_btn = QPushButton(_("Open in Terminal"))
+        self.open_in_terminal_btn.setIcon(QIcon.fromTheme("terminal"))
+        self.open_in_terminal_btn.setToolTip(_("CTRL+SHIFT+T"))
+        self.open_in_terminal_btn.setToolTipDuration(1500)
+        self.open_in_terminal_btn.clicked.connect(self.open_in_terminal)
+        btn_layout.addWidget(self.open_in_terminal_btn)
 
         # Update Button with system icon
         self.unified_update_btn = QPushButton(_("Update Database"))
         self.unified_update_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.unified_update_btn.setToolTip(_("Select which database(s) you wish to update."))
+        self.unified_update_btn.setToolTipDuration(1500)
         self.unified_update_btn.clicked.connect(self.update_unified_database)
         btn_layout.addWidget(self.unified_update_btn)
 
@@ -445,7 +457,7 @@ class PlocateGUI(QWidget):
         # Check if the index is valid and within bounds
         row = current_index.row()
         default_instructions = _(
-            "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."
+            "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+t opens path in terminal. Right-click for menu."
         )
 
         if not current_index.isValid() or row < 0 or row >= len(self.model._data):
@@ -553,7 +565,7 @@ class PlocateGUI(QWidget):
         raw_filter_pattern = self.filter_input.text().strip()
         final_filter_pattern = ""
         default_instructions = _(
-            "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."
+            "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+T opens path in terminal. Right-click for menu."
         )
 
         if not term:
@@ -900,7 +912,7 @@ class PlocateGUI(QWidget):
 
             # 2. Restore the default instruction text (which was always visible)
             default_instructions = _(
-                "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Right-click for menu."
+                "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+T opens path in terminal. Right-click for menu."
             )
             self.update_status_display(default_instructions)
 
