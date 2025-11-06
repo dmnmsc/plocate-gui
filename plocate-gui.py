@@ -7,7 +7,7 @@ import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
-    QMenu, QProgressBar  # QProgressBar added
+    QMenu, QProgressBar
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
@@ -131,30 +131,40 @@ class UpdateDBWorker(QRunnable):
         self.update_command = update_command
         self.db_type = db_type
         self.signals = UpdateDBSignals()
+        self.process = None  # To hold the running subprocess reference
+        self.canceled = False  # Flag to indicate user cancellation
 
     def run(self):
         self.signals.started.emit()
         try:
-            # NOTE: subprocess.run is in the worker thread, so the UI won't freeze.
-            # If pkexec asks for a password, the dialog should still appear on the main screen.
-            result = subprocess.run(
+            # NOTE: Use Popen to keep control of the process and allow cancellation
+            self.process = subprocess.Popen(
                 self.update_command,
                 text=True,
-                capture_output=True,
-                check=True
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
             )
-            # Success
-            self.signals.finished.emit(True, result.stdout, self.db_type)
 
-        except subprocess.CalledProcessError as e:
-            # Failure (non-zero exit status)
-            error_details = e.stderr or e.stdout or _("No detailed error message was returned.")
-            full_error_message = (
-                    _("Command: ") + " ".join(self.update_command) +
-                    _("\nExit Status: ") + str(e.returncode) +
-                    _("\nDetails: \n") + error_details.strip()
-            )
-            self.signals.finished.emit(False, full_error_message, self.db_type)
+            # Wait for the process to finish (blocks only the worker thread)
+            stdout, stderr = self.process.communicate()
+
+            if self.canceled:
+                # The user canceled the operation (the message will be handled in the UI)
+                self.signals.finished.emit(False, _("Database update was cancelled by the user."), self.db_type)
+                return
+
+            if self.process.returncode == 0:
+                # Success
+                self.signals.finished.emit(True, stdout, self.db_type)
+            else:
+                # Failure (non-zero exit code)
+                error_details = stderr or stdout or _("No detailed error message was returned.")
+                full_error_message = (
+                        _("Command: ") + " ".join(self.update_command) +
+                        _("\nExit Status: ") + str(self.process.returncode) +
+                        _("\nDetails: \n") + error_details.strip()
+                )
+                self.signals.finished.emit(False, full_error_message, self.db_type)
 
         except FileNotFoundError:
             # Failure (pkexec not found)
@@ -164,7 +174,23 @@ class UpdateDBWorker(QRunnable):
                                        )
         except Exception as e:
             # Catch all other exceptions
-            self.signals.finished.emit(False, _("An unexpected error occurred: ") + str(e), self.db_type)
+            if self.canceled:
+                self.signals.finished.emit(False, _("Database update was cancelled by the user."), self.db_type)
+            else:
+                self.signals.finished.emit(False, _("An unexpected error occurred: ") + str(e), self.db_type)
+
+    def cancel(self):
+        """Terminates the running subprocess if it is active."""
+        if self.process and self.process.poll() is None:  # poll() checks if the process is still running
+            self.canceled = True
+            try:
+                # Terminate the process (sends SIGTERM)
+                self.process.terminate()
+                # Wait briefly for it to terminate
+                self.process.wait(timeout=1)
+            except OSError:
+                # Catches "No such process" errors if the process terminated just now
+                pass
 
 
 # Model implementation for QTableView
@@ -265,6 +291,8 @@ class PlocateGUI(QWidget):
         self.threadpool = QThreadPool()
         # To track the path being currently processed by the worker (prevents race conditions)
         self.current_stat_path = None
+        # NEW: Reference to the update worker for cancellation
+        self.update_worker = None
 
         # Try to load the application icon from the system theme
         icon = QIcon.fromTheme("plocate-gui")
@@ -347,7 +375,7 @@ class PlocateGUI(QWidget):
 
         # Instructions/info label -> Replaced by dynamic status label
         self.status_label = QLabel(
-            _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+T opens path in terminal. Right-click for menu."))
+            _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+t opens path in terminal. Right-click for menu."))
         # Use the new utility method for initial setup
         self.update_status_display(self.status_label.text())
 
@@ -370,6 +398,14 @@ class PlocateGUI(QWidget):
 
         # 2. Progress Bar: Starts immediately after the status label text.
         status_bar_layout.addWidget(self.progress_bar)
+
+        # 3. NEW: Cancel Button for DB update
+        self.cancel_update_btn = QPushButton(_("Cancel"))
+        self.cancel_update_btn.setIcon(QIcon.fromTheme("dialog-cancel"))
+        self.cancel_update_btn.setMaximumWidth(100)
+        self.cancel_update_btn.hide()  # Initially hidden
+        self.cancel_update_btn.clicked.connect(self.cancel_db_update)
+        status_bar_layout.addWidget(self.cancel_update_btn)
 
         # Add the horizontal layout to the main vertical layout
         main_layout.addLayout(status_bar_layout)
@@ -902,13 +938,14 @@ class PlocateGUI(QWidget):
             # 1. The status label remains visible and shows the progress message
             self.update_status_display(_("Database update in progress... Please wait."))
 
-            # 2. Show the progress bar (which now fills the remaining space next to the text)
+            # 2. Show the progress bar and cancel button
             self.progress_bar.setFormat(_("Updating database..."))
             self.progress_bar.show()
-
+            self.cancel_update_btn.show()  # <-- Show Cancel button
         else:
-            # 1. Hide the progress bar
+            # 1. Hide the progress bar and cancel button
             self.progress_bar.hide()
+            self.cancel_update_btn.hide()  # <-- Hide Cancel button
 
             # 2. Restore the default instruction text (which was always visible)
             default_instructions = _(
@@ -916,14 +953,29 @@ class PlocateGUI(QWidget):
             )
             self.update_status_display(default_instructions)
 
+    def cancel_db_update(self):
+        """Called when the user clicks the 'Cancel' button."""
+        if self.update_worker:
+            self.update_worker.cancel()
+            self.update_status_display(_("Attempting to cancel database update..."))
+
     def handle_db_update_start(self):
-        """Called by a DB worker's signal when it starts."""
-        # The UI is already blocked by the call to set_ui_updating_state(True)
-        # We could add more complex visual feedback here if needed, but the progress bar handles it.
-        pass
+        """Called by a DB worker's signal when it starts. Updates the status message."""
+        if self.update_worker:
+            # Get the type (e.g., "System" or "Media") from the worker instance
+            db_type = self.update_worker.db_type
+            self.update_status_display(
+                # Use the fetched type in the status message
+                _("Starting {db_type} database update... Please enter your password if prompted.").format(db_type=db_type)
+            )
+        else:
+            # Fallback message
+            self.update_status_display(_("Starting database update... Please enter your password if prompted."))
 
     def handle_db_update_finish(self, success: bool, message: str, db_type: str):
-        """Called by a DB worker's signal when it finishes."""
+        """Called by a DB worker's signal when it finishes. Handles message display."""
+
+        cancellation_message = _("Database update was cancelled by the user.")
 
         if success:
             # Show a brief success message
@@ -932,7 +984,11 @@ class PlocateGUI(QWidget):
                 _("Update Completed"),
                 _("{db_type} database updated successfully.").format(db_type=db_type)
             )
+        elif cancellation_message in message:
+            # Handle cancellation message
+            QMessageBox.information(self, _("Info"), cancellation_message)
         else:
+            # Handle non-cancellation failure
             full_error_message = (
                     _("Could not update {db_type} database.\n").format(db_type=db_type) +
                     _("Details: \n") + message
@@ -942,26 +998,39 @@ class PlocateGUI(QWidget):
     def run_update_worker(self, update_command, db_type: str, next_step_fn=None):
         """Initializes and starts a new UpdateDBWorker in the thread pool."""
 
+        if self.update_worker is not None:
+            QMessageBox.information(self, _("Info"), _("A database update is already in progress."))
+            return
+
+        # Assign worker immediately
+        worker = UpdateDBWorker(update_command, db_type)
+        self.update_worker = worker
+
         # Set UI state to updating immediately on the main thread (block buttons and show progress bar)
         self.set_ui_updating_state(True)
-
-        worker = UpdateDBWorker(update_command, db_type)
 
         # Connect signals
         worker.signals.started.connect(self.handle_db_update_start)
 
         # Signal to handle the final result and optionally call the next step
         def on_finish(success, message, finished_db_type):
+
+            # 1. Release worker reference immediately
+            self.update_worker = None
+
+            # 2. Handle message display (including cancellation message)
             self.handle_db_update_finish(success, message, finished_db_type)
 
-            # --- Sequence and Final UI Restoration Logic ---
             if success and next_step_fn:
                 # Success and there is a next step (Media DB), call it.
                 next_step_fn()
-            elif not success or not next_step_fn:
-                # Failure OR success and no next step (i.e., this is the last step).
-                # In both cases, restore the UI state now.
+            else:
+                # Failure, Cancellation, OR Success and last step: Restore UI state
                 self.set_ui_updating_state(False)
+
+            # If search input is not empty, rerun search to reflect new DB state (optional but good UX)
+            if not self.search_input.text().strip():
+                self.run_search()
 
         worker.signals.finished.connect(on_finish)
 
@@ -984,6 +1053,7 @@ class PlocateGUI(QWidget):
             update_command.append("-e")
             update_command.extend(exclusion_paths)
 
+        # Use the unified worker runner
         self.run_update_worker(update_command, _("System"), next_step_fn)
 
     def update_media_database(self):
@@ -992,8 +1062,7 @@ class PlocateGUI(QWidget):
         # Command: pkexec updatedb -o /var/lib/plocate/media.db -U /run/media
         update_command = ["pkexec", "updatedb", "-o", MEDIA_DB_PATH, "-U", MEDIA_SCAN_PATH]
 
-        # When media update finishes, we must restore the UI state, so we pass None
-        # as the next_step_fn, letting the on_finish logic restore the UI.
+        # Use the unified worker runner, passing None for next_step_fn
         self.run_update_worker(
             update_command,
             _("Media")
@@ -1005,8 +1074,8 @@ class PlocateGUI(QWidget):
         Launches workers to perform updates in a non-blocking way.
         """
 
-        # If an update is already in progress, do nothing
-        if self.search_input.isEnabled() is False:
+        # Check if an update is already in progress using the new worker reference
+        if self.update_worker is not None:
             QMessageBox.information(self, _("Info"), _("A database update is already in progress."))
             return
 
