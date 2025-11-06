@@ -287,6 +287,10 @@ class PlocateGUI(QWidget):
         self.setWindowTitle(_("Plocate GUI"))
         self.resize(800, 700)
 
+        # --- Internal State for Preferences and Toggles ---
+        self.case_insensitive_search = False
+        # --- End Internal State ---
+
         # New: Initialize ThreadPool for non-blocking operations
         self.threadpool = QThreadPool()
         # To track the path being currently processed by the worker (prevents race conditions)
@@ -325,12 +329,26 @@ class PlocateGUI(QWidget):
         self.search_input.setClearButtonEnabled(True)
         search_options_layout.addWidget(self.search_input)
 
-        # Checkbox for case insensitivity with icon
-        self.case_insensitive_checkbox = QCheckBox(_("Case insensitive (-i)"))
-        self.case_insensitive_checkbox.setIcon(QIcon.fromTheme("view-sort-ascending"))
-        self.case_insensitive_checkbox.setToolTip(_("Perform case insensitive search (uses plocate -i)"))
-        self.case_insensitive_checkbox.stateChanged.connect(self.run_search)
-        search_options_layout.addWidget(self.case_insensitive_checkbox)
+        # NEW: Case Insensitive Toggle Button (Dynamic Text) - FOR SEARCH
+        self.case_insensitive_btn = QPushButton()
+        self.case_insensitive_btn.setCheckable(True)  # Make it a toggle button
+
+        # Initialize state and text (Aa = Case Sensitive OFF)
+        self.case_insensitive_btn.setChecked(self.case_insensitive_search)
+        self.case_insensitive_btn.setText('Aa')
+        self.case_insensitive_btn.setToolTip(
+            _("Toggle Case Insensitive Search (-i): Aa = Sensitive | aa = Insensitive"))
+
+        # Set a fixed, slightly larger size for text visibility
+        self.case_insensitive_btn.setFixedSize(36, 36)
+        # Initial text update based on default state
+        self.update_case_insensitive_text()
+
+        # Connect signal: we use clicked() for checkable buttons
+        self.case_insensitive_btn.clicked.connect(self.toggle_case_insensitive)
+
+        # Add the compact button to the search layout
+        search_options_layout.addWidget(self.case_insensitive_btn)
 
         main_layout.addLayout(search_options_layout)
 
@@ -458,6 +476,32 @@ class PlocateGUI(QWidget):
 
         main_layout.addLayout(btn_layout)
         self.setLayout(main_layout)
+
+    def update_case_insensitive_text(self):
+        """Updates the search button's text based on the internal state."""
+        if self.case_insensitive_search:
+            # Case Insensitive ON: 'aa' (case doesn't matter)
+            self.case_insensitive_btn.setText('aa')
+            self.case_insensitive_btn.setToolTip(
+                _("Search is Case Insensitive (-i). Click to toggle to Sensitive (Aa)."))
+        else:
+            # Case Insensitive OFF: 'Aa' (case matters)
+            self.case_insensitive_btn.setText('Aa')
+            self.case_insensitive_btn.setToolTip(
+                _("Search is Case Sensitive (Aa). Click to toggle to Insensitive (aa)."))
+
+    def toggle_case_insensitive(self):
+        """Toggles the internal state, updates the style, and re-runs the search."""
+
+        # The button's check state is already updated by the signal
+        self.case_insensitive_search = self.case_insensitive_btn.isChecked()
+
+        # Update dynamic text
+        self.update_case_insensitive_text()
+
+        # Rerun search immediately if there is a term
+        if self.search_input.text().strip():
+            self.run_search()
 
     def open_documentation(self):
         """Opens the project website/documentation in the system's default browser (F1 shortcut)."""
@@ -602,7 +646,7 @@ class PlocateGUI(QWidget):
         plocate_command = ["plocate", term]
 
         # 2. Add case-insensitivity option
-        if self.case_insensitive_checkbox.isChecked():
+        if self.case_insensitive_search:
             plocate_command.insert(1, "-i")
 
         # 3. Multiple database option (if the media database exists)
@@ -917,7 +961,7 @@ class PlocateGUI(QWidget):
         self.search_input.setDisabled(is_disabled)
         self.filter_input.setDisabled(is_disabled)
         self.custom_exclude_input.setDisabled(is_disabled)
-        self.case_insensitive_checkbox.setDisabled(is_disabled)
+        self.case_insensitive_btn.setDisabled(is_disabled) # <-- Changed from checkbox
         self.open_file_btn.setDisabled(is_disabled)
         self.open_path_btn.setDisabled(is_disabled)
         self.unified_update_btn.setDisabled(is_disabled)
