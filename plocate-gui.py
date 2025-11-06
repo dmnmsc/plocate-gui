@@ -285,7 +285,7 @@ class PlocateGUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(_("Plocate GUI"))
-        self.resize(800, 550)
+        self.resize(800, 700)
 
         # New: Initialize ThreadPool for non-blocking operations
         self.threadpool = QThreadPool()
