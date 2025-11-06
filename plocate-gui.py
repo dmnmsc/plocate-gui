@@ -721,6 +721,54 @@ class PlocateGUI(QWidget):
 
         QDesktopServices.openUrl(QUrl.fromLocalFile(path_to_open))
 
+    def open_in_terminal(self):
+        """
+        Opens the containing folder or file path in the system's preferred terminal
+        by trying a sequence of common terminal commands.
+        """
+        name, path, is_dir = self.get_selected_row_data()
+        if not name or not path:
+            QMessageBox.information(self, _("Info"), _("Please select a valid result row."))
+            return
+
+        # Determine the path to open (parent directory for files, full path for directories)
+        full_path = os.path.join(path, name)
+        path_to_open_in_terminal = full_path if is_dir else path
+
+        # List of terminal commands and their working directory arguments
+        # Note: We rely on the system finding the executable via PATH.
+        terminal_configs = [
+            ('konsole', '--workdir'),
+            ('gnome-terminal', '--working-directory'),
+            ('xfce4-terminal', '--working-directory')
+        ]
+
+        # Flag to track if the terminal was launched
+        launched = False
+
+        # Iterate and try to launch the terminal
+        for command, arg in terminal_configs:
+            try:
+                # Try to launch the terminal, passing the path as the working directory
+                subprocess.Popen([command, arg, path_to_open_in_terminal])
+                launched = True
+                break  # Exit the loop immediately on success
+            except FileNotFoundError:
+                # Terminal command not found, try the next one
+                continue
+            except Exception as e:
+                # Catch other critical errors (like permission issues)
+                QMessageBox.critical(self, _("Terminal Error"),
+                                     _("An error occurred while trying to open {cmd}: ").format(cmd=command) + str(e)
+                                     )
+                return  # Stop trying and exit the function
+
+        # If the loop finished without launching a terminal
+        if not launched:
+            QMessageBox.warning(self, _("Terminal Error"),
+                                _("Could not launch terminal. None of the common terminal commands (gnome-terminal, konsole, xfce4-terminal) were found. Please install one or check your PATH.")
+                                )
+
     # --- METHOD TO SHOW CONTEXT MENU (NEW) ---
     def show_context_menu(self, pos):
         """Displays the context menu at the given position if a row is selected."""
@@ -739,6 +787,10 @@ class PlocateGUI(QWidget):
         # 2. Open Path
         action_open_path = menu.addAction(QIcon.fromTheme("folder-open"), _("Open Folder (Ctrl+Enter)"))
         action_open_path.triggered.connect(self.open_path)
+
+        # 3. Open in Terminal
+        action_open_terminal = menu.addAction(QIcon.fromTheme("utilities-terminal"), _("Open Path in Terminal"))
+        action_open_terminal.triggered.connect(self.open_in_terminal)
 
         menu.addSeparator()
 
@@ -780,7 +832,17 @@ class PlocateGUI(QWidget):
                 event.accept()
                 return
 
-        # 3. Handle F5 for database update
+        # 3. Handle Ctrl + Shift + T (Opens Path in Terminal) - NEW PRIORITY
+        is_ctrl_shift_t = (key == Qt.Key.Key_T and
+                           (modifiers & Qt.KeyboardModifier.ControlModifier) and
+                           (modifiers & Qt.KeyboardModifier.ShiftModifier))
+
+        if is_ctrl_shift_t and selected_rows:
+            self.open_in_terminal()
+            event.accept()
+            return
+
+        # 4. Handle F5 for database update
         elif key == Qt.Key.Key_F5:
             self.update_unified_database()
             event.accept()
