@@ -410,17 +410,6 @@ class PlocateGUI(QWidget):
         # Add the horizontal layout to the main vertical layout
         main_layout.addLayout(status_bar_layout)
 
-        # -------------------------------------------------------------------
-
-        # --- STYLE BLOCK ---
-        self.status_label.setStyleSheet("""
-            QLabel {
-                /* Increased font size for slightly better readability */
-                font-size: 12px;
-                padding: 4px 6px;
-            }
-        """)
-
         # --- CUSTOM EXCLUSION INPUT with icon and CLEAR BUTTON ---
         self.custom_exclude_input = QLineEdit()
         self.custom_exclude_input.setPlaceholderText(_("Paths to exclude (System DB only): E.g.: /mnt/backup /tmp"))
