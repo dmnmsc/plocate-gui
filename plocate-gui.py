@@ -422,6 +422,11 @@ class PlocateGUI(QWidget):
         main_layout.addLayout(btn_layout)
         self.setLayout(main_layout)
 
+    def open_documentation(self):
+        """Opens the project website/documentation in the system's default browser (F1 shortcut)."""
+        DOC_URL = "https://github.com/dmnmsc/plocate-gui"
+        QDesktopServices.openUrl(QUrl(DOC_URL))
+
     # --- STATUS LABEL UTILITY METHOD (NEW) ---
     def update_status_display(self, text: str):
         """Sets the status label text and automatically sets the tooltip to the same text."""
@@ -848,7 +853,13 @@ class PlocateGUI(QWidget):
             event.accept()
             return
 
-        # 4. Handle Escape key to close the application
+        # 5. Handle F1 for Documentation (NEW)
+        elif key == Qt.Key.Key_F1:
+            self.open_documentation()
+            event.accept()
+            return
+
+        # 6. Handle Escape key to close the application
         elif key == Qt.Key.Key_Escape:
             self.close()
             event.accept()
