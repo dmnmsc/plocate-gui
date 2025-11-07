@@ -26,17 +26,6 @@ DEFAULT_DB_PATH = "/var/lib/plocate/plocate.db"
 MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
 
-# --- Status Text Definitions (IN ENGLISH LITERALS) ---
-# Long, descriptive text for the Tooltip
-FULL_INSTRUCTIONS = _(
-    "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+t opens path in terminal. Right-click for menu."
-)
-# Short, icon-based text for the visible status bar
-CONCISE_INSTRUCTIONS = _(
-    "📄: ⏎ or Double-Click | 📁: Ctrl+⏎ | 💻: Ctrl+Shift+T | ☰: Right-Click"
-)
-# --- END Status Text Definitions ---
-
 # --- CATEGORY FILTERING LOGIC (FIXED and TRANSLATED) ---
 # Map display names to a list of extensions (DO NOT include '$' here, it will be added in get_category_regex)
 FILE_CATEGORIES = {
@@ -637,9 +626,11 @@ class PlocateGUI(QWidget):
         main_layout.addWidget(self.result_table)
 
         # Instructions/info label -> Replaced by dynamic status label
-        self.status_label = QLabel(CONCISE_INSTRUCTIONS)  # Use the concise constant here
+        # Get the database modification status to display as the default text
+        initial_status_text = self.get_db_mod_date_status()
+        self.status_label = QLabel(initial_status_text)
         # Use the new utility method for initial setup
-        self.update_status_display(CONCISE_INSTRUCTIONS)  # And here
+        self.update_status_display(initial_status_text)
 
         # --- NEW: Indeterminate Progress Bar for non-blocking operations ---
         self.progress_bar = QProgressBar()
@@ -673,6 +664,36 @@ class PlocateGUI(QWidget):
         main_layout.addLayout(status_bar_layout)
 
         self.setLayout(main_layout)
+
+    # --- NEW METHOD: Get Database Modification Status ---
+    def get_db_mod_date_status(self) -> str:
+        """
+        Fetches the last modification date of plocate.db and media.db
+        and formats them for the status bar.
+        """
+
+        def get_date_str(path):
+            """Helper to get formatted date or status string for a given path."""
+            try:
+                # Use os.stat to get file metadata
+                stat_result = os.stat(path)
+                # Format modification date (st_mtime)
+                mod_time = datetime.datetime.fromtimestamp(stat_result.st_mtime)
+                return mod_time.strftime('%Y-%m-%d %H:%M:%S')
+            except FileNotFoundError:
+                return _("Not Found")
+            except Exception:
+                return _("Error")
+
+        system_date = get_date_str(DEFAULT_DB_PATH)
+        media_date = get_date_str(MEDIA_DB_PATH)
+
+        return _("System DB: {sys_date} | Media DB: {media_date}").format(
+            sys_date=system_date,
+            media_date=media_date
+        )
+
+    # --- END NEW METHOD ---
 
     def update_case_insensitive_text(self):
         """Updates the search button's text based on the internal state."""
@@ -717,22 +738,19 @@ class PlocateGUI(QWidget):
         QDesktopServices.openUrl(QUrl(DOC_URL))
 
     # --- STATUS LABEL UTILITY METHOD ---
-    # ALIGNMENT CORRECTION: Conditional alignment to center only the instructions.
     def update_status_display(self, text: str):
-        """Sets the status label text and intelligently sets the tooltip."""
+        """Sets the status label text and sets the tooltip to match the text."""
         self.status_label.setText(text)
+        self.status_label.setToolTip(text)  # Tooltip simply echoes the status text
 
-        # Smart logic to manage the Tooltip:
-        if text == CONCISE_INSTRUCTIONS:
-            # If the text is the concise message (instructions):
-            self.status_label.setToolTip(FULL_INSTRUCTIONS)
-            # Center the text so it looks good in the middle.
-            self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        default_status = self.get_db_mod_date_status()
+
+        if text == default_status:
+            # Align right for database update time
+            self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         else:
-            # If the text is dynamic (metadata, error, progress):
-            self.status_label.setToolTip(text)
-            # Align left for file metadata.
-            self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            # Align left for dynamic data (count, metadata, date status)
+            self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
     # --- METADATA STATUS METHODS (NON-BLOCKING) ---
     def update_metadata_status(self, current_index, previous_index):
@@ -747,19 +765,29 @@ class PlocateGUI(QWidget):
         row = current_index.row()
 
         if not current_index.isValid() or row < 0 or row >= len(self.model._data):
-            # Restore default instruction text if the index is invalid
-            self.update_status_display(CONCISE_INSTRUCTIONS)
+            # Restore default status (DB dates) if the index is invalid
+            self.update_status_display(self.get_db_mod_date_status())
             return
 
         try:
             # Get the data tuple (name, path, is_dir) directly from the model's internal list using the row index
             name, path, is_dir = self.model._data[row]
         except IndexError:
-            self.update_status_display(CONCISE_INSTRUCTIONS)
+            self.update_status_display(self.get_db_mod_date_status())
             return
 
         if name == _("No results found"):
-            self.update_status_display(CONCISE_INSTRUCTIONS)
+            # Restore the state *before* this selection (usually a result count or date status)
+            if self.search_input.text().strip():
+                # Display the result count again if there was a search term
+                result_count = len(self.model._data)
+                if result_count > 0 and self.model._data[0][0] != _("No results found"):
+                    status_message = _("Found {} results").format(result_count)
+                    self.update_status_display(status_message)
+                else:
+                    self.update_status_display(_("No results found"))
+            else:
+                self.update_status_display(self.get_db_mod_date_status())
             return
 
         full_path = os.path.join(path, name)
@@ -851,9 +879,12 @@ class PlocateGUI(QWidget):
         raw_filter_pattern = self.filter_input.text().strip()
         final_filter_pattern = ""
 
+        # New default status is the DB update dates
+        DEFAULT_STATUS_TEXT = self.get_db_mod_date_status()
+
         if not term:
             self.model.set_data([])
-            self.update_status_display(CONCISE_INSTRUCTIONS)
+            self.update_status_display(DEFAULT_STATUS_TEXT)  # Use DB dates
             return
 
         # 1. Build the base plocate command
@@ -1214,8 +1245,8 @@ class PlocateGUI(QWidget):
             self.progress_bar.hide()
             self.cancel_update_btn.hide()  # <-- Hide Cancel button
 
-            # 2. Restore the default instruction text (which was always visible)
-            self.update_status_display(CONCISE_INSTRUCTIONS)
+            # 2. Restore the database update status text
+            self.update_status_display(self.get_db_mod_date_status())
 
     def cancel_db_update(self):
         """Called when the user clicks the 'Cancel' button."""
