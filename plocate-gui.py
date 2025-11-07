@@ -947,14 +947,21 @@ class PlocateGUI(QWidget):
             # Store (name, parent, is_dir)
             display_rows.append((name, parent, is_dir))
 
+        # --- Result Counting Logic (NEW) ---
+        result_count = len(display_rows)
+        # Use the Qt translation function for status message
+        status_message = _("Found {} results").format(result_count)
+
         # Populate the table
         if not display_rows:
             # Note: Must pass 3 elements (name, path, is_dir) even for the info row
             self.model.set_data([(_("No results found"), "", False)])
-            # Clear metadata status
-            self.update_status_display(CONCISE_INSTRUCTIONS)
+            # Update the status to indicate no results.
+            self.update_status_display(_("No results found"))
         else:
             self.model.set_data(display_rows)
+            # Update the status with the result count.
+            self.update_status_display(status_message)
 
             # Restore sorting if the table was sorted
             if self.current_sort_column != -1:
