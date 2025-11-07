@@ -573,6 +573,13 @@ class PlocateGUI(QWidget):
         # Add the compact button to the search layout
         search_options_layout.addWidget(self.case_insensitive_btn)
 
+        self.unified_update_btn = QPushButton(_("Update DB"))  # Texto más corto
+        self.unified_update_btn.setIcon(QIcon.fromTheme("view-refresh"))
+        self.unified_update_btn.setToolTip(_("Select which database(s) you wish to update. (F5)"))
+        self.unified_update_btn.setToolTipDuration(1500)
+        self.unified_update_btn.clicked.connect(self.update_unified_database)
+        search_options_layout.addWidget(self.unified_update_btn)
+
         main_layout.addLayout(search_options_layout)
 
         # Filter input (regex) with icon and CLEAR BUTTON
@@ -651,40 +658,6 @@ class PlocateGUI(QWidget):
         # Add the horizontal layout to the main vertical layout
         main_layout.addLayout(status_bar_layout)
 
-        # --- ACTION BUTTONS CONTAINER ---
-        btn_layout = QHBoxLayout()
-
-        # Action Buttons with system icons
-        self.open_file_btn = QPushButton(_("Open File"))
-        self.open_file_btn.setIcon(QIcon.fromTheme("document-open"))
-        self.open_file_btn.setToolTip("ENTER")
-        self.open_file_btn.setToolTipDuration(1500)
-        self.open_file_btn.clicked.connect(self.open_file)
-        btn_layout.addWidget(self.open_file_btn)
-
-        self.open_path_btn = QPushButton(_("Open Folder"))
-        self.open_path_btn.setIcon(QIcon.fromTheme("folder-open"))
-        self.open_path_btn.setToolTip("CTRL+ENTER")
-        self.open_path_btn.setToolTipDuration(1500)
-        self.open_path_btn.clicked.connect(self.open_path)
-        btn_layout.addWidget(self.open_path_btn)
-
-        self.open_in_terminal_btn = QPushButton(_("Open in Terminal"))
-        self.open_in_terminal_btn.setIcon(QIcon.fromTheme("terminal"))
-        self.open_in_terminal_btn.setToolTip(_("CTRL+SHIFT+T"))
-        self.open_in_terminal_btn.setToolTipDuration(1500)
-        self.open_in_terminal_btn.clicked.connect(self.open_in_terminal)
-        btn_layout.addWidget(self.open_in_terminal_btn)
-
-        # Update Button with system icon
-        self.unified_update_btn = QPushButton(_("Update Database"))
-        self.unified_update_btn.setIcon(QIcon.fromTheme("view-refresh"))
-        self.unified_update_btn.setToolTip(_("Select which database(s) you wish to update."))
-        self.unified_update_btn.setToolTipDuration(1500)
-        self.unified_update_btn.clicked.connect(self.update_unified_database)
-        btn_layout.addWidget(self.unified_update_btn)
-
-        main_layout.addLayout(btn_layout)
         self.setLayout(main_layout)
 
     def update_case_insensitive_text(self):
@@ -1111,7 +1084,7 @@ class PlocateGUI(QWidget):
         action_open_path.triggered.connect(self.open_path)
 
         # 3. Open in Terminal
-        action_open_terminal = menu.addAction(QIcon.fromTheme("utilities-terminal"), _("Open Path in Terminal"))
+        action_open_terminal = menu.addAction(QIcon.fromTheme("utilities-terminal"), _("Open Path in Terminal (Ctrl+Shift+T"))
         action_open_terminal.triggered.connect(self.open_in_terminal)
 
         menu.addSeparator()
@@ -1198,8 +1171,6 @@ class PlocateGUI(QWidget):
         self.filter_input.setDisabled(is_disabled)
         self.category_combobox.setDisabled(is_disabled)
         self.case_insensitive_btn.setDisabled(is_disabled)
-        self.open_file_btn.setDisabled(is_disabled)
-        self.open_path_btn.setDisabled(is_disabled)
         self.unified_update_btn.setDisabled(is_disabled)
 
         # Toggle visibility of the status label and the progress bar
