@@ -784,7 +784,7 @@ class PlocateGUI(QWidget):
         try:
             # Run plocate and get output
             result = subprocess.run(
-                plocate_command, text=True, capture_output=True, check=True
+                plocate_command, text=True, capture_output=True, check=False
             )
             files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         except subprocess.CalledProcessError as e:
