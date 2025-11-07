@@ -394,7 +394,6 @@ class UpdateDatabaseDialog(QDialog):
         self.system_checkbox = QCheckBox(_("Update System Index"))
         self.system_checkbox.setChecked(True)
         self.system_checkbox.setIcon(QIcon.fromTheme("drive-harddisk"))
-        # Style to highlight the checkbox
         self.system_checkbox.setStyleSheet("font-weight: bold;")
 
         # System DB Info: Descriptive text
@@ -402,30 +401,22 @@ class UpdateDatabaseDialog(QDialog):
             _("Includes most of the operating system files, excluding external media and temporary directories. This is the primary index."))
         system_info.setWordWrap(True)
 
-        # --- START REORDERING FOR SYSTEM INDEX ---
+        # --- Exclusion Path Integration ---
 
-        # 1. Add Descriptive Text first
         sys_vbox.addWidget(system_info)
-        sys_vbox.addSpacing(10)  # Small spacing before the exclusion path section
+        sys_vbox.addSpacing(10)
 
-        # --- Simplified Exclusion Path Integration ---
-
-        # Icon and label for exclusions (in a horizontal layout)
         exclude_label_layout = QHBoxLayout()
         exclude_label_layout.setContentsMargins(0, 0, 0, 0)
         exclude_label_layout.setSpacing(5)
-
         icon_folder = QLabel()
         icon_folder.setPixmap(QIcon.fromTheme("folder-close").pixmap(16, 16))
-
-        # Simple label without bold for exclusion text
         exclude_label = QLabel(_("Additional Paths to Exclude (updatedb -e):"))
-
         exclude_label_layout.addWidget(icon_folder)
         exclude_label_layout.addWidget(exclude_label)
-        exclude_label_layout.addStretch(1)  # Pushes to the left
+        exclude_label_layout.addStretch(1)
 
-        sys_vbox.addLayout(exclude_label_layout)  # Add the label/icon layout
+        sys_vbox.addLayout(exclude_label_layout)
 
         # Input Field for exclusions
         self.exclude_input = QLineEdit()
@@ -433,19 +424,10 @@ class UpdateDatabaseDialog(QDialog):
         self.exclude_input.setToolTip(
             _("Enter space-separated paths to exclude (e.g., external drives, temporary files). These are additional to system defaults.")
         )
-        # --- CORRECTION: REMOVE setFocusPolicy(Qt.FocusPolicy.NoFocus) to allow typing ---
+        sys_vbox.addWidget(self.exclude_input)
 
-        sys_vbox.addWidget(self.exclude_input)  # Add the input field
-
-        # --- End Simplified Exclusion Path Integration ---
-
-        # 2. Add spacing before the checkbox
         sys_vbox.addSpacing(10)
-
-        # 3. Add Checkbox last
         sys_vbox.addWidget(self.system_checkbox)
-
-        # --- END REORDERING FOR SYSTEM INDEX ---
 
         main_layout.addWidget(system_group)
         main_layout.addSpacing(15)
@@ -461,15 +443,14 @@ class UpdateDatabaseDialog(QDialog):
         self.media_checkbox.setIcon(QIcon.fromTheme("media-removable"))
         self.media_checkbox.setStyleSheet("font-weight: bold;")
 
-        # NEW: Label for paths to index
+        # Label for paths to index
         media_path_label = QLabel(
             _("Paths to index (space-separated). Use the default to scan all mounted media:")
         )
         media_path_label.setWordWrap(True)
 
-        # NEW: Input field for paths
+        # Input field for paths
         self.media_paths_input = QLineEdit()
-        # Default value is the standard media path
         self.media_paths_input.setText(media_path)
         self.media_paths_input.setPlaceholderText(
             _("E.g.: /run/media /mnt/MyExternalDrive")
@@ -477,21 +458,12 @@ class UpdateDatabaseDialog(QDialog):
         self.media_paths_input.setToolTip(
             _("Enter space-separated directories to be scanned by updatedb using the 'media.db' database.")
         )
-        # --- CORRECTION: REMOVE setFocusPolicy(Qt.FocusPolicy.NoFocus) to allow typing ---
 
-        # --- START REORDERING FOR MEDIA INDEX ---
-
-        # 1. Add Descriptive Text and Input Field
+        # Layout for Media Group
         media_vbox.addWidget(media_path_label)
         media_vbox.addWidget(self.media_paths_input)
-
-        # 2. Add spacing before the checkbox
         media_vbox.addSpacing(10)
-
-        # 3. Add Checkbox last
         media_vbox.addWidget(self.media_checkbox)
-
-        # --- END REORDERING FOR MEDIA INDEX ---
 
         main_layout.addWidget(media_group)
         main_layout.addSpacing(15)
@@ -502,8 +474,11 @@ class UpdateDatabaseDialog(QDialog):
             Qt.Orientation.Horizontal
         )
 
-        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText(_("Start Update"))
-        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setIcon(QIcon.fromTheme("view-refresh"))
+        ok_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok_button.setText(_("Start Update"))
+        ok_button.setIcon(QIcon.fromTheme("view-refresh"))
+        ok_button.setDefault(True)  # Ensure 'Enter' works
+
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(_("Cancel"))
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setIcon(QIcon.fromTheme("dialog-cancel"))
 
@@ -511,6 +486,11 @@ class UpdateDatabaseDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
 
         main_layout.addWidget(self.buttons)
+
+        # --- FIX: Force button focus at the end ---
+        # Takes priority over QLineEdit focus logic.
+        ok_button.setFocus()
+        # ------------------------------------------------------------------------------------------
 
     def get_settings(self):
         """Returns the settings needed by the main window."""
