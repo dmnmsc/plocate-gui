@@ -26,7 +26,7 @@ DEFAULT_DB_PATH = "/var/lib/plocate/plocate.db"
 MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
 
-# --- Status Text Definitions ---
+# --- Status Text Definitions (IN ENGLISH LITERALS) ---
 # Long, descriptive text for the Tooltip
 FULL_INSTRUCTIONS = _(
     "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+t opens path in terminal. Right-click for menu."
@@ -35,6 +35,7 @@ FULL_INSTRUCTIONS = _(
 CONCISE_INSTRUCTIONS = _(
     "📄: ⏎ or Double-Click | 📁: Ctrl+⏎ | 💻: Ctrl+Shift+T | ☰: Right-Click"
 )
+# --- END Status Text Definitions ---
 
 # --- CATEGORY FILTERING LOGIC (FIXED and TRANSLATED) ---
 # Map display names to a list of extensions (DO NOT include '$' here, it will be added in get_category_regex)
@@ -432,8 +433,7 @@ class UpdateDatabaseDialog(QDialog):
         self.exclude_input.setToolTip(
             _("Enter space-separated paths to exclude (e.g., external drives, temporary files). These are additional to system defaults.")
         )
-        # Avoid focus
-        self.exclude_input.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # --- CORRECTION: REMOVE setFocusPolicy(Qt.FocusPolicy.NoFocus) to allow typing ---
 
         sys_vbox.addWidget(self.exclude_input)  # Add the input field
 
@@ -461,14 +461,29 @@ class UpdateDatabaseDialog(QDialog):
         self.media_checkbox.setIcon(QIcon.fromTheme("media-removable"))
         self.media_checkbox.setStyleSheet("font-weight: bold;")
 
-        media_info = QLabel(_("Scans the directory where most external devices are mounted: ") + f"<b>{media_path}</b>")
-        media_info.setOpenExternalLinks(False)
-        media_info.setWordWrap(True)
+        # NEW: Label for paths to index
+        media_path_label = QLabel(
+            _("Paths to index (space-separated). Use the default to scan all mounted media:")
+        )
+        media_path_label.setWordWrap(True)
+
+        # NEW: Input field for paths
+        self.media_paths_input = QLineEdit()
+        # Default value is the standard media path
+        self.media_paths_input.setText(media_path)
+        self.media_paths_input.setPlaceholderText(
+            _("E.g.: /run/media /mnt/MyExternalDrive")
+        )
+        self.media_paths_input.setToolTip(
+            _("Enter space-separated directories to be scanned by updatedb using the 'media.db' database.")
+        )
+        # --- CORRECTION: REMOVE setFocusPolicy(Qt.FocusPolicy.NoFocus) to allow typing ---
 
         # --- START REORDERING FOR MEDIA INDEX ---
 
-        # 1. Add Descriptive Text first
-        media_vbox.addWidget(media_info)
+        # 1. Add Descriptive Text and Input Field
+        media_vbox.addWidget(media_path_label)
+        media_vbox.addWidget(self.media_paths_input)
 
         # 2. Add spacing before the checkbox
         media_vbox.addSpacing(10)
@@ -502,7 +517,8 @@ class UpdateDatabaseDialog(QDialog):
         return {
             'update_system': self.system_checkbox.isChecked(),
             'update_media': self.media_checkbox.isChecked(),
-            'exclude_paths': self.exclude_input.text().strip()
+            'exclude_paths': self.exclude_input.text().strip(),
+            'media_index_paths': self.media_paths_input.text().strip()  # NEW
         }
 
 
@@ -593,7 +609,7 @@ class PlocateGUI(QWidget):
         # Add the compact button to the search layout
         search_options_layout.addWidget(self.case_insensitive_btn)
 
-        self.unified_update_btn = QPushButton(_("Update DB"))
+        self.unified_update_btn = QPushButton(_("Update DB"))  # Short text
         self.unified_update_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.unified_update_btn.setToolTip(_("Select which database(s) you wish to update. (F5)"))
         self.unified_update_btn.clicked.connect(self.update_unified_database)
@@ -721,6 +737,7 @@ class PlocateGUI(QWidget):
         QDesktopServices.openUrl(QUrl(DOC_URL))
 
     # --- STATUS LABEL UTILITY METHOD ---
+    # ALIGNMENT CORRECTION: Conditional alignment to center only the instructions.
     def update_status_display(self, text: str):
         """Sets the status label text and intelligently sets the tooltip."""
         self.status_label.setText(text)
@@ -1318,11 +1335,22 @@ class PlocateGUI(QWidget):
         # Use the unified worker runner
         self.run_update_worker(update_command, _("System"), next_step_fn)
 
-    def update_media_database(self):
-        """Starts the media DB update worker."""
+    def update_media_database(self, paths_to_index: str):
+        """Starts the media DB update worker, indexing the given paths."""
 
-        # Command: pkexec updatedb -o /var/lib/plocate/media.db -U /run/media
-        update_command = ["pkexec", "updatedb", "-o", MEDIA_DB_PATH, "-U", MEDIA_SCAN_PATH]
+        # Command: pkexec updatedb -o /var/lib/plocate/media.db -U /path/to/media/
+        update_command = ["pkexec", "updatedb", "-o", MEDIA_DB_PATH]
+
+        # Use the provided paths
+        index_paths = [p.strip() for p in paths_to_index.split() if p.strip()]
+
+        if not index_paths:
+            # Should not happen if dialog default is used, but safe guard.
+            QMessageBox.warning(self, _("Error"), _("No paths specified for media indexing. The media database update was skipped."))
+            return
+
+        update_command.append("-U")
+        update_command.extend(index_paths)
 
         # Use the unified worker runner, passing None for next_step_fn
         self.run_update_worker(
@@ -1351,17 +1379,23 @@ class PlocateGUI(QWidget):
             system_update = settings['update_system']
             media_update = settings['update_media']
             custom_excludes_text = settings['exclude_paths']
+            media_index_paths = settings['media_index_paths']  # NEW
 
             # 3. Handle selection logic
             if not system_update and not media_update:
                 QMessageBox.information(self, _("Info"), _("No databases selected for update."))
                 return
 
+            # Helper function for media update (required because it's chained)
+            def start_media_update_chain():
+                # We need to pass the paths to the media update function
+                self.update_media_database(media_index_paths)
+
             if system_update and media_update:
                 # Case 1: Both databases. Start System, then Media on success.
                 self.update_system_database(
                     custom_excludes_text=custom_excludes_text,
-                    next_step_fn=self.update_media_database  # Chain Media update
+                    next_step_fn=start_media_update_chain  # Chain Media update
                 )
             elif system_update:
                 # Case 2: System only.
@@ -1371,7 +1405,7 @@ class PlocateGUI(QWidget):
                 )
             elif media_update:
                 # Case 3: Media only.
-                self.update_media_database()
+                start_media_update_chain()  # Start Media update directly
         else:
             # User clicked Cancel or closed the dialog
             QMessageBox.information(self, _("Info"), _("Database update cancelled."))
