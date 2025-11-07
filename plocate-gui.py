@@ -580,7 +580,6 @@ class PlocateGUI(QWidget):
         self.unified_update_btn = QPushButton(_("Update DB"))  # Texto más corto
         self.unified_update_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.unified_update_btn.setToolTip(_("Select which database(s) you wish to update. (F5)"))
-        self.unified_update_btn.setToolTipDuration(1500)
         self.unified_update_btn.clicked.connect(self.update_unified_database)
         search_options_layout.addWidget(self.unified_update_btn)
 
