@@ -34,12 +34,13 @@ FILE_CATEGORIES = {
     _("Documents"): ['.pdf', '.doc', '.docx', '.odt'],
     _("Images"): ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
     _("Videos"): ['.avi', '.mp4', '.mkv', '.mov'],
-    _("Audio"): ['.mp3', '.wav', '.ogg', '.flac', '.m4a'], # Renamed back to Audio
-    _("Apps"): ['.appimage', '.exe', '.deb', '.rpm', '.desktop'], # Added .desktop
+    _("Audio"): ['.mp3', '.wav', '.ogg', '.flac', '.m4a'],
+    _("Apps"): ['.appimage', '.exe', '.deb', '.rpm', '.desktop'],  # Added .desktop
     _("Code/Scripts"): ['.py', '.sh', '.c', '.cpp', '.html', '.js'],
     _("Archives"): ['.zip', '.rar', '.7z', '.tar', '.gz'],
     _("Generic Text"): ['.txt', '.log', '.md']
 }
+
 
 def get_category_regex(category_name: str) -> str | None:
     """Returns a combined case-insensitive regex pattern for the category or None/DIR_ONLY flag."""
@@ -52,7 +53,7 @@ def get_category_regex(category_name: str) -> str | None:
             break
 
     if extensions_list is None:
-        return None # Should not happen if ComboBox is populated correctly
+        return None  # Should not happen if ComboBox is populated correctly
 
     if not extensions_list:
         return None  # 'All Categories' or empty list
@@ -64,6 +65,7 @@ def get_category_regex(category_name: str) -> str | None:
     # to anchor the match to the end of the path/filename.
     patterns = [re.escape(ext) for ext in extensions_list]
     return r"(?:" + r"|".join(patterns) + r")$"
+
 
 # --- NEW: Icon Utility Function for Category Menu ---
 def get_icon_for_category(category_name: str) -> QIcon:
@@ -81,7 +83,7 @@ def get_icon_for_category(category_name: str) -> QIcon:
     if _("Audio") == category_name:
         return QIcon.fromTheme("audio-x-generic")
     if _("Apps") == category_name:
-        return QIcon.fromTheme("applications-other") # Generic icon for applications
+        return QIcon.fromTheme("applications-other")  # Generic icon for applications
     if _("Code/Scripts") == category_name:
         return QIcon.fromTheme("text-x-script")
     if _("Archives") == category_name:
@@ -89,7 +91,8 @@ def get_icon_for_category(category_name: str) -> QIcon:
     if _("Generic Text") == category_name:
         return QIcon.fromTheme("text-x-generic")
 
-    return QIcon() # Fallback
+    return QIcon()  # Fallback
+
 
 # --- File Size Utility ---
 def human_readable_size(size, decimal_places=2):
@@ -112,32 +115,32 @@ def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     # 2. Icon based on Common Extensions (using Freedesktop icon naming spec)
     ext = os.path.splitext(filepath)[1].lower()
 
-    if ext in ['.mp3', '.wav', '.ogg', '.flac', '.m4a']: # Audio
+    if ext in ['.mp3', '.wav', '.ogg', '.flac', '.m4a']:  # Audio
         return QIcon.fromTheme("audio-x-generic")
 
-    if ext in ['.avi', '.mp4', '.mkv', '.mov']: # Videos
+    if ext in ['.avi', '.mp4', '.mkv', '.mov']:  # Videos
         return QIcon.fromTheme("video-x-generic")
 
-    if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']: # Images
+    if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:  # Images
         return QIcon.fromTheme("image-x-generic")
 
-    if ext in ['.pdf']: # Documents
+    if ext in ['.pdf']:  # Documents
         return QIcon.fromTheme("application-pdf")
 
-    if ext in ['.doc', '.docx', '.odt']: # Documents
+    if ext in ['.doc', '.docx', '.odt']:  # Documents
         return QIcon.fromTheme("x-office-document")
 
     # Archives/Apps (Updated to include .desktop)
     if ext in ['.zip', '.rar', '.7z', '.tar', '.gz', '.deb', '.rpm', '.appimage', '.exe', '.desktop']:
         # Using a generic executable icon for apps and .desktop files
         if ext in ['.deb', '.rpm', '.appimage', '.exe', '.desktop']:
-             return QIcon.fromTheme("application-x-executable")
-        return QIcon.fromTheme("package-x-generic") # Archives
+            return QIcon.fromTheme("application-x-executable")
+        return QIcon.fromTheme("package-x-generic")  # Archives
 
-    if ext in ['.py', '.sh', '.c', '.cpp', '.html', '.js']: # Code
+    if ext in ['.py', '.sh', '.c', '.cpp', '.html', '.js']:  # Code
         return QIcon.fromTheme("text-x-script")
 
-    if ext in ['.txt', '.log', '.md']: # Text
+    if ext in ['.txt', '.log', '.md']:  # Text
         return QIcon.fromTheme("text-x-generic")
 
     # 3. Default Icon (Generic File)
@@ -494,7 +497,7 @@ class PlocateGUI(QWidget):
 
         # --- Internal State for Preferences and Toggles ---
         self.case_insensitive_search = False
-        self.current_category_regex = None # Stores the current regex filter for category
+        self.current_category_regex = None  # Stores the current regex filter for category
         # --- End Internal State ---
 
         # Initialize ThreadPool for non-blocking operations
