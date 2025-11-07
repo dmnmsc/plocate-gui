@@ -26,6 +26,16 @@ DEFAULT_DB_PATH = "/var/lib/plocate/plocate.db"
 MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
 
+# --- Status Text Definitions ---
+# Long, descriptive text for the Tooltip
+FULL_INSTRUCTIONS = _(
+    "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+t opens path in terminal. Right-click for menu."
+)
+# Short, icon-based text for the visible status bar
+CONCISE_INSTRUCTIONS = _(
+    "📄: ⏎ or Double-Click | 📁: Ctrl+⏎ | 💻: Ctrl+Shift+T | ☰: Right-Click"
+)
+
 # --- CATEGORY FILTERING LOGIC (FIXED and TRANSLATED) ---
 # Map display names to a list of extensions (DO NOT include '$' here, it will be added in get_category_regex)
 FILE_CATEGORIES = {
@@ -44,7 +54,7 @@ FILE_CATEGORIES = {
 
 def get_category_regex(category_name: str) -> str | None:
     """Returns a combined case-insensitive regex pattern for the category or None/DIR_ONLY flag."""
-    # This is a bit complex due to gettext, the ComboBox gives us the translated string,
+    # This is complex due to gettext; the ComboBox gives us the translated string,
     # so we need a reliable way to get the original extension list.
     extensions_list = None
     for key, extensions in FILE_CATEGORIES.items():
@@ -61,13 +71,13 @@ def get_category_regex(category_name: str) -> str | None:
     if extensions_list[0] == "DIR_ONLY":
         return r"^(?:[^\n]*\/)?[^\/\.]*$"
 
-    # FIX: We now escape the extension and explicitly add the '$' at the end of the pattern
+    # We escape the extension and explicitly add the '$' at the end of the pattern
     # to anchor the match to the end of the path/filename.
     patterns = [re.escape(ext) for ext in extensions_list]
     return r"(?:" + r"|".join(patterns) + r")$"
 
 
-# --- NEW: Icon Utility Function for Category Menu ---
+# --- Icon Utility Function for Category Menu ---
 def get_icon_for_category(category_name: str) -> QIcon:
     """Returns a QIcon based on the translated category name."""
     if _("All Categories") == category_name:
@@ -96,7 +106,7 @@ def get_icon_for_category(category_name: str) -> QIcon:
 
 # --- File Size Utility ---
 def human_readable_size(size, decimal_places=2):
-    """Converts bytes to a human-readable string (KB, MB, GB, etc.)."""
+    """Converts bytes to a human-readable string (KB, MB, GB, TB, etc.)."""
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024.0:
             break
@@ -379,7 +389,7 @@ class UpdateDatabaseDialog(QDialog):
         sys_vbox = QVBoxLayout(system_group)
         sys_vbox.addSpacing(15)
 
-        # Checkbox for System (Highlighted with Bold) - Prepared but not added yet
+        # Checkbox for System (Highlighted with Bold)
         self.system_checkbox = QCheckBox(_("Update System Index"))
         self.system_checkbox.setChecked(True)
         self.system_checkbox.setIcon(QIcon.fromTheme("drive-harddisk"))
@@ -445,7 +455,7 @@ class UpdateDatabaseDialog(QDialog):
         media_vbox = QVBoxLayout(media_group)
         media_vbox.addSpacing(15)
 
-        # Checkbox for Media (Highlighted with Bold) - Prepared but not added yet
+        # Checkbox for Media (Highlighted with Bold)
         self.media_checkbox = QCheckBox(_("Update External Media Index"))
         self.media_checkbox.setChecked(True)
         self.media_checkbox.setIcon(QIcon.fromTheme("media-removable"))
@@ -583,7 +593,7 @@ class PlocateGUI(QWidget):
         # Add the compact button to the search layout
         search_options_layout.addWidget(self.case_insensitive_btn)
 
-        self.unified_update_btn = QPushButton(_("Update DB"))  # Texto más corto
+        self.unified_update_btn = QPushButton(_("Update DB"))
         self.unified_update_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.unified_update_btn.setToolTip(_("Select which database(s) you wish to update. (F5)"))
         self.unified_update_btn.clicked.connect(self.update_unified_database)
@@ -623,18 +633,17 @@ class PlocateGUI(QWidget):
         # We will use the index passed by the signal to get the row data directly.
         self.result_table.selectionModel().currentChanged.connect(self.update_metadata_status)
 
-        # --- Context Menu Setup (NEW) ---
+        # --- Context Menu Setup ---
         self.result_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.result_table.customContextMenuRequested.connect(self.show_context_menu)
-        # -----------------------------------
+        # ---------------------------
 
         main_layout.addWidget(self.result_table)
 
         # Instructions/info label -> Replaced by dynamic status label
-        self.status_label = QLabel(
-            _("Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+t opens path in terminal. Right-click for menu."))
+        self.status_label = QLabel(CONCISE_INSTRUCTIONS)  # Use the concise constant here
         # Use the new utility method for initial setup
-        self.update_status_display(self.status_label.text())
+        self.update_status_display(CONCISE_INSTRUCTIONS)  # And here
 
         # --- NEW: Indeterminate Progress Bar for non-blocking operations ---
         self.progress_bar = QProgressBar()
@@ -713,9 +722,20 @@ class PlocateGUI(QWidget):
 
     # --- STATUS LABEL UTILITY METHOD ---
     def update_status_display(self, text: str):
-        """Sets the status label text and automatically sets the tooltip to the same text."""
+        """Sets the status label text and intelligently sets the tooltip."""
         self.status_label.setText(text)
-        self.status_label.setToolTip(text)
+
+        # Smart logic to manage the Tooltip:
+        if text == CONCISE_INSTRUCTIONS:
+            # If the text is the concise message (instructions):
+            self.status_label.setToolTip(FULL_INSTRUCTIONS)
+            # Center the text so it looks good in the middle.
+            self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        else:
+            # If the text is dynamic (metadata, error, progress):
+            self.status_label.setToolTip(text)
+            # Align left for file metadata.
+            self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
     # --- METADATA STATUS METHODS (NON-BLOCKING) ---
     def update_metadata_status(self, current_index, previous_index):
@@ -728,24 +748,21 @@ class PlocateGUI(QWidget):
 
         # Check if the index is valid and within bounds
         row = current_index.row()
-        default_instructions = _(
-            "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+t opens path in terminal. Right-click for menu."
-        )
 
         if not current_index.isValid() or row < 0 or row >= len(self.model._data):
             # Restore default instruction text if the index is invalid
-            self.update_status_display(default_instructions)
+            self.update_status_display(CONCISE_INSTRUCTIONS)
             return
 
         try:
             # Get the data tuple (name, path, is_dir) directly from the model's internal list using the row index
             name, path, is_dir = self.model._data[row]
         except IndexError:
-            self.update_status_display(default_instructions)
+            self.update_status_display(CONCISE_INSTRUCTIONS)
             return
 
         if name == _("No results found"):
-            self.update_status_display(default_instructions)
+            self.update_status_display(CONCISE_INSTRUCTIONS)
             return
 
         full_path = os.path.join(path, name)
@@ -836,13 +853,10 @@ class PlocateGUI(QWidget):
         term = self.search_input.text().strip()
         raw_filter_pattern = self.filter_input.text().strip()
         final_filter_pattern = ""
-        default_instructions = _(
-            "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+T opens path in terminal. Right-click for menu."
-        )
 
         if not term:
             self.model.set_data([])
-            self.update_status_display(default_instructions)
+            self.update_status_display(CONCISE_INSTRUCTIONS)
             return
 
         # 1. Build the base plocate command
@@ -941,7 +955,7 @@ class PlocateGUI(QWidget):
             # Note: Must pass 3 elements (name, path, is_dir) even for the info row
             self.model.set_data([(_("No results found"), "", False)])
             # Clear metadata status
-            self.update_status_display(default_instructions)
+            self.update_status_display(CONCISE_INSTRUCTIONS)
         else:
             self.model.set_data(display_rows)
 
@@ -952,8 +966,8 @@ class PlocateGUI(QWidget):
             else:
                 self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
 
-        # Apply the responsive sizing (initial adjustment)
-        self._apply_responsive_column_sizing()
+            # Apply the responsive sizing (initial adjustment)
+            self._apply_responsive_column_sizing()
 
     def get_selected_row_data(self):
         """Gets the Name, Path, and is_dir of the selected row via the model."""
@@ -1197,10 +1211,7 @@ class PlocateGUI(QWidget):
             self.cancel_update_btn.hide()  # <-- Hide Cancel button
 
             # 2. Restore the default instruction text (which was always visible)
-            default_instructions = _(
-                "Double click to open. Enter/Return opens file. Ctrl+Enter opens path. Ctrl+shift+T opens path in terminal. Right-click for menu."
-            )
-            self.update_status_display(default_instructions)
+            self.update_status_display(CONCISE_INSTRUCTIONS)
 
     def cancel_db_update(self):
         """Called when the user clicks the 'Cancel' button."""
