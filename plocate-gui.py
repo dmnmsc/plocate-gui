@@ -59,7 +59,7 @@ def get_category_regex(category_name: str) -> str | None:
         return None  # 'All Categories' or empty list
 
     if extensions_list[0] == "DIR_ONLY":
-        return "DIR_ONLY"  # Special flag
+        return r"^(?:[^\n]*\/)?[^\/\.]*$"
 
     # FIX: We now escape the extension and explicitly add the '$' at the end of the pattern
     # to anchor the match to the end of the path/filename.
@@ -108,8 +108,12 @@ def human_readable_size(size, decimal_places=2):
 def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     """Returns a QIcon based on the file extension or if it is a directory."""
 
+    if not filepath or filepath == _("No results found"):
+        return QIcon.fromTheme("text-x-generic")
+
     # 1. Directory Icon
-    if is_dir:
+    basename = os.path.basename(filepath)
+    if is_dir or ('.' not in basename and basename != ''):
         return QIcon.fromTheme("folder")
 
     # 2. Icon based on Common Extensions (using Freedesktop icon naming spec)
