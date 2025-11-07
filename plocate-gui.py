@@ -8,12 +8,11 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
     QMenu, QProgressBar,
-    # Imports for the dialog
+    QComboBox,
     QDialog, QDialogButtonBox, QGroupBox
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
-    # Imports for non-blocking metadata fetching
     QRunnable, QThreadPool, pyqtSignal, QObject
 )
 from PyQt6.QtGui import QDesktopServices, QIcon, QAction, QGuiApplication
@@ -27,6 +26,70 @@ DEFAULT_DB_PATH = "/var/lib/plocate/plocate.db"
 MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
 
+# --- CATEGORY FILTERING LOGIC (FIXED and TRANSLATED) ---
+# Map display names to a list of extensions (DO NOT include '$' here, it will be added in get_category_regex)
+FILE_CATEGORIES = {
+    _("All Categories"): [],
+    _("Directories"): ["DIR_ONLY"],  # Special flag to filter only directories
+    _("Documents"): ['.pdf', '.doc', '.docx', '.odt'],
+    _("Images"): ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
+    _("Videos"): ['.avi', '.mp4', '.mkv', '.mov'],
+    _("Audio"): ['.mp3', '.wav', '.ogg', '.flac', '.m4a'], # Renamed back to Audio
+    _("Apps"): ['.appimage', '.exe', '.deb', '.rpm', '.desktop'], # Added .desktop
+    _("Code/Scripts"): ['.py', '.sh', '.c', '.cpp', '.html', '.js'],
+    _("Archives"): ['.zip', '.rar', '.7z', '.tar', '.gz'],
+    _("Generic Text"): ['.txt', '.log', '.md']
+}
+
+def get_category_regex(category_name: str) -> str | None:
+    """Returns a combined case-insensitive regex pattern for the category or None/DIR_ONLY flag."""
+    # This is a bit complex due to gettext, the ComboBox gives us the translated string,
+    # so we need a reliable way to get the original extension list.
+    extensions_list = None
+    for key, extensions in FILE_CATEGORIES.items():
+        if key == category_name or _(key) == category_name:
+            extensions_list = extensions
+            break
+
+    if extensions_list is None:
+        return None # Should not happen if ComboBox is populated correctly
+
+    if not extensions_list:
+        return None  # 'All Categories' or empty list
+
+    if extensions_list[0] == "DIR_ONLY":
+        return "DIR_ONLY"  # Special flag
+
+    # FIX: We now escape the extension and explicitly add the '$' at the end of the pattern
+    # to anchor the match to the end of the path/filename.
+    patterns = [re.escape(ext) for ext in extensions_list]
+    return r"(?:" + r"|".join(patterns) + r")$"
+
+# --- NEW: Icon Utility Function for Category Menu ---
+def get_icon_for_category(category_name: str) -> QIcon:
+    """Returns a QIcon based on the translated category name."""
+    if _("All Categories") == category_name:
+        return QIcon.fromTheme("system-search")
+    if _("Directories") == category_name:
+        return QIcon.fromTheme("folder")
+    if _("Documents") == category_name:
+        return QIcon.fromTheme("x-office-document")
+    if _("Images") == category_name:
+        return QIcon.fromTheme("image-x-generic")
+    if _("Videos") == category_name:
+        return QIcon.fromTheme("video-x-generic")
+    if _("Audio") == category_name:
+        return QIcon.fromTheme("audio-x-generic")
+    if _("Apps") == category_name:
+        return QIcon.fromTheme("applications-other") # Generic icon for applications
+    if _("Code/Scripts") == category_name:
+        return QIcon.fromTheme("text-x-script")
+    if _("Archives") == category_name:
+        return QIcon.fromTheme("package-x-generic")
+    if _("Generic Text") == category_name:
+        return QIcon.fromTheme("text-x-generic")
+
+    return QIcon() # Fallback
 
 # --- File Size Utility ---
 def human_readable_size(size, decimal_places=2):
@@ -38,7 +101,7 @@ def human_readable_size(size, decimal_places=2):
     return f"{size:.{decimal_places}f} {unit}"
 
 
-# --- Icon Utility Function ---
+# --- Icon Utility Function for Table View (Updated for .desktop) ---
 def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     """Returns a QIcon based on the file extension or if it is a directory."""
 
@@ -49,28 +112,32 @@ def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     # 2. Icon based on Common Extensions (using Freedesktop icon naming spec)
     ext = os.path.splitext(filepath)[1].lower()
 
-    if ext in ['.mp3', '.wav', '.ogg', '.flac']:
+    if ext in ['.mp3', '.wav', '.ogg', '.flac', '.m4a']: # Audio
         return QIcon.fromTheme("audio-x-generic")
 
-    if ext in ['.avi', '.mp4', '.mkv', '.mov']:
+    if ext in ['.avi', '.mp4', '.mkv', '.mov']: # Videos
         return QIcon.fromTheme("video-x-generic")
 
-    if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+    if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']: # Images
         return QIcon.fromTheme("image-x-generic")
 
-    if ext in ['.pdf']:
+    if ext in ['.pdf']: # Documents
         return QIcon.fromTheme("application-pdf")
 
-    if ext in ['.doc', '.docx', '.odt']:
+    if ext in ['.doc', '.docx', '.odt']: # Documents
         return QIcon.fromTheme("x-office-document")
 
-    if ext in ['.zip', '.rar', '.7z', '.tar', '.gz']:
-        return QIcon.fromTheme("package-x-generic")
+    # Archives/Apps (Updated to include .desktop)
+    if ext in ['.zip', '.rar', '.7z', '.tar', '.gz', '.deb', '.rpm', '.appimage', '.exe', '.desktop']:
+        # Using a generic executable icon for apps and .desktop files
+        if ext in ['.deb', '.rpm', '.appimage', '.exe', '.desktop']:
+             return QIcon.fromTheme("application-x-executable")
+        return QIcon.fromTheme("package-x-generic") # Archives
 
-    if ext in ['.py', '.sh', '.c', '.cpp', '.html', '.js']:
+    if ext in ['.py', '.sh', '.c', '.cpp', '.html', '.js']: # Code
         return QIcon.fromTheme("text-x-script")
 
-    if ext in ['.txt', '.log', '.md']:
+    if ext in ['.txt', '.log', '.md']: # Text
         return QIcon.fromTheme("text-x-generic")
 
     # 3. Default Icon (Generic File)
@@ -427,6 +494,7 @@ class PlocateGUI(QWidget):
 
         # --- Internal State for Preferences and Toggles ---
         self.case_insensitive_search = False
+        self.current_category_regex = None # Stores the current regex filter for category
         # --- End Internal State ---
 
         # Initialize ThreadPool for non-blocking operations
@@ -467,12 +535,25 @@ class PlocateGUI(QWidget):
         self.search_input.setClearButtonEnabled(True)
         search_options_layout.addWidget(self.search_input)
 
+        # Category Filter ComboBox (UPDATED TO INCLUDE ICONS)
+        self.category_combobox = QComboBox()
+        self.category_combobox.setToolTip(_("Filter results by file category."))
+
+        # Populate with translated names and set icons for each item
+        for key in FILE_CATEGORIES.keys():
+            translated_key = _(key)
+            icon = get_icon_for_category(translated_key)
+            self.category_combobox.addItem(icon, translated_key)
+
+        self.category_combobox.currentIndexChanged.connect(self.category_changed)
+        search_options_layout.addWidget(self.category_combobox)
+
         # Case Insensitive Toggle Button (Dynamic Text) - FOR SEARCH
         self.case_insensitive_btn = QPushButton()
         self.case_insensitive_btn.setCheckable(True)  # Make it a toggle button
 
         # Initialize state and text (Aa = Case Sensitive OFF)
-        self.case_insensitive_search = False  # Reverting to default off, since the checkbox version was removed
+        self.case_insensitive_search = False
         self.case_insensitive_btn.setChecked(self.case_insensitive_search)
         self.case_insensitive_btn.setText('Aa')
         self.case_insensitive_btn.setToolTip(
@@ -624,6 +705,17 @@ class PlocateGUI(QWidget):
 
         # Update dynamic text
         self.update_case_insensitive_text()
+
+        # Rerun search immediately if there is a term
+        if self.search_input.text().strip():
+            self.run_search()
+
+    # Slot to handle category change
+    def category_changed(self, index):
+        """Updates the internal state and re-runs the search with the new category filter."""
+        # The ComboBox returns the translated string, so we pass that to get_category_regex
+        selected_category_display_name = self.category_combobox.currentText()
+        self.current_category_regex = get_category_regex(selected_category_display_name)
 
         # Rerun search immediately if there is a term
         if self.search_input.text().strip():
@@ -794,7 +886,26 @@ class PlocateGUI(QWidget):
                 QMessageBox.warning(self, _("Error"), _("Error executing plocate:\n") + str(e))
                 return
 
-        # --- Multi-Keyword Filtering Logic ---
+        # --- Category Filtering Logic (Applied before regex filter) ---
+        category_regex = self.current_category_regex
+
+        if category_regex is not None:
+            if category_regex == "DIR_ONLY":
+                # Filter 1: Directory only (paths ending with os.path.sep)
+                files = [f for f in files if f.endswith(os.path.sep)]
+            else:
+                # Filter 1: Apply category regex filter (case-insensitive on the file path end)
+                try:
+                    # re.IGNORECASE is used because the plocate output paths may contain mixed case extensions.
+                    category_filter_regex = re.compile(category_regex, re.IGNORECASE)
+                    # Use re.search on the full path for the extension match
+                    files = [f for f in files if category_filter_regex.search(f)]
+                except re.error:
+                    QMessageBox.warning(self, _("Error"), _("Category filter contains an invalid regex pattern."))
+                    return
+        # --- End Category Filtering Logic ---
+
+        # --- Multi-Keyword/Regex Filtering Logic (Existing, Applied after category filter) ---
         if raw_filter_pattern:
             # Split by space, filter out empty strings (multiple spaces)
             keywords = [k for k in raw_filter_pattern.split() if k]
@@ -802,11 +913,7 @@ class PlocateGUI(QWidget):
             if len(keywords) > 1:
                 # If multiple space-separated keywords are found, build an AND regex
                 # using lookahead assertions: (?=.*keyword1)(?=.*keyword2).*
-
-                # IMPORTANT: Escape all keywords for safety, as they are not meant to be regex patterns
                 escaped_keywords = [re.escape(k) for k in keywords]
-
-                # Construct the lookahead pattern
                 lookahead_assertions = "".join(f"(?=.*{k})" for k in escaped_keywords)
                 final_filter_pattern = f"^{lookahead_assertions}.*$"
             else:
@@ -815,7 +922,7 @@ class PlocateGUI(QWidget):
 
             # Now apply the constructed (or direct) regex filter
             try:
-                # Sticking to simple regex matching on output lines for simplicity.
+                # Sticking to simple regex matching on output lines.
                 regex = re.compile(final_filter_pattern)
                 files = [f for f in files if regex.search(f)]
             except re.error:
@@ -1086,6 +1193,7 @@ class PlocateGUI(QWidget):
         is_disabled = is_updating
         self.search_input.setDisabled(is_disabled)
         self.filter_input.setDisabled(is_disabled)
+        self.category_combobox.setDisabled(is_disabled)
         self.case_insensitive_btn.setDisabled(is_disabled)
         self.open_file_btn.setDisabled(is_disabled)
         self.open_path_btn.setDisabled(is_disabled)
