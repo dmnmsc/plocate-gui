@@ -7,21 +7,22 @@ import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
-    QMenu, QProgressBar
+    QMenu, QProgressBar,
+    # Imports for the dialog
+    QDialog, QDialogButtonBox, QGroupBox
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
-    # New imports for non-blocking metadata fetching
+    # Imports for non-blocking metadata fetching
     QRunnable, QThreadPool, pyqtSignal, QObject
 )
 from PyQt6.QtGui import QDesktopServices, QIcon, QAction, QGuiApplication
 import os
 
-# Set up gettext for internationalization, defaulting to English strings.
-# User-facing strings use the _() function for translation.
+# Gettext configuration for internationalization
 _ = gettext.gettext
 
-# Database path definitions for clarity
+# Database paths
 DEFAULT_DB_PATH = "/var/lib/plocate/plocate.db"
 MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
@@ -281,6 +282,143 @@ class PlocateResultsModel(QAbstractTableModel):
         self.layoutChanged.emit()
 
 
+# --- CLASS: Custom Dialog for DB Update (Focus Optimized) ---
+class UpdateDatabaseDialog(QDialog):
+    """A custom dialog for configuring the updatedb process."""
+
+    def __init__(self, parent=None, media_path=MEDIA_SCAN_PATH):
+        super().__init__(parent)
+        self.setWindowTitle(_("Database Update Options"))
+        self.setWindowIcon(QIcon.fromTheme("view-refresh"))
+        self.setMinimumWidth(400)
+
+        main_layout = QVBoxLayout(self)
+
+        # 1. Header/Info Section
+        info_label = QLabel(_("Select the databases to update. This operation requires root privileges."))
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(info_label)
+
+        # 2. System DB Group (plocate.db)
+        system_group = QGroupBox(_("SYSTEM INDEX (plocate.db)"))
+        sys_vbox = QVBoxLayout(system_group)
+        sys_vbox.addSpacing(15)
+
+        # Checkbox for System (Highlighted with Bold) - Prepared but not added yet
+        self.system_checkbox = QCheckBox(_("Update System Index"))
+        self.system_checkbox.setChecked(True)
+        self.system_checkbox.setIcon(QIcon.fromTheme("drive-harddisk"))
+        # Style to highlight the checkbox
+        self.system_checkbox.setStyleSheet("font-weight: bold;")
+
+        # System DB Info: Descriptive text
+        system_info = QLabel(
+            _("Includes most of the operating system files, excluding external media and temporary directories. This is the primary index."))
+        system_info.setWordWrap(True)
+
+        # --- START REORDERING FOR SYSTEM INDEX ---
+
+        # 1. Add Descriptive Text first
+        sys_vbox.addWidget(system_info)
+        sys_vbox.addSpacing(10)  # Small spacing before the exclusion path section
+
+        # --- Simplified Exclusion Path Integration ---
+
+        # Icon and label for exclusions (in a horizontal layout)
+        exclude_label_layout = QHBoxLayout()
+        exclude_label_layout.setContentsMargins(0, 0, 0, 0)
+        exclude_label_layout.setSpacing(5)
+
+        icon_folder = QLabel()
+        icon_folder.setPixmap(QIcon.fromTheme("folder-close").pixmap(16, 16))
+
+        # Simple label without bold for exclusion text
+        exclude_label = QLabel(_("Additional Paths to Exclude (updatedb -e):"))
+
+        exclude_label_layout.addWidget(icon_folder)
+        exclude_label_layout.addWidget(exclude_label)
+        exclude_label_layout.addStretch(1)  # Pushes to the left
+
+        sys_vbox.addLayout(exclude_label_layout)  # Add the label/icon layout
+
+        # Input Field for exclusions
+        self.exclude_input = QLineEdit()
+        self.exclude_input.setPlaceholderText(_("E.g.: /mnt/backup /tmp"))
+        self.exclude_input.setToolTip(
+            _("Enter space-separated paths to exclude (e.g., external drives, temporary files). These are additional to system defaults.")
+        )
+        sys_vbox.addWidget(self.exclude_input)  # Add the input field
+
+        # --- End Simplified Exclusion Path Integration ---
+
+        # 2. Add spacing before the checkbox
+        sys_vbox.addSpacing(10)
+
+        # 3. Add Checkbox last
+        sys_vbox.addWidget(self.system_checkbox)
+
+        # --- END REORDERING FOR SYSTEM INDEX ---
+
+        main_layout.addWidget(system_group)
+
+        # 3. Media Database Option
+        media_group = QGroupBox(_("EXTERNAL MEDIA INDEX (media.db)"))
+        media_vbox = QVBoxLayout(media_group)
+        media_vbox.addSpacing(15)
+
+        # Checkbox for Media (Highlighted with Bold) - Prepared but not added yet
+        self.media_checkbox = QCheckBox(_("Update External Media Index"))
+        self.media_checkbox.setChecked(True)
+        self.media_checkbox.setIcon(QIcon.fromTheme("media-removable"))
+        self.media_checkbox.setStyleSheet("font-weight: bold;")
+
+        media_info = QLabel(_("Scans the directory where most external devices are mounted: ") + f"<b>{media_path}</b>")
+        media_info.setOpenExternalLinks(False)
+        media_info.setWordWrap(True)
+
+        # --- START REORDERING FOR MEDIA INDEX ---
+
+        # 1. Add Descriptive Text first
+        media_vbox.addWidget(media_info)
+
+        # 2. Add spacing before the checkbox
+        media_vbox.addSpacing(10)
+
+        # 3. Add Checkbox last
+        media_vbox.addWidget(self.media_checkbox)
+
+        # --- END REORDERING FOR MEDIA INDEX ---
+
+        main_layout.addWidget(media_group)
+
+        # 4. Dialog Buttons (QDialogButtonBox)
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            Qt.Orientation.Horizontal
+        )
+
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText(_("Start Update"))
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setIcon(QIcon.fromTheme("view-refresh"))
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(_("Cancel"))
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setIcon(QIcon.fromTheme("dialog-cancel"))
+
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+
+        main_layout.addWidget(self.buttons)
+
+    def get_settings(self):
+        """Returns the settings needed by the main window."""
+        return {
+            'update_system': self.system_checkbox.isChecked(),
+            'update_media': self.media_checkbox.isChecked(),
+            'exclude_paths': self.exclude_input.text().strip()
+        }
+
+
+# --- END OF CUSTOM DIALOG CLASS (Focus Optimized) ---
+
+
 class PlocateGUI(QWidget):
     def __init__(self):
         super().__init__()
@@ -291,11 +429,11 @@ class PlocateGUI(QWidget):
         self.case_insensitive_search = False
         # --- End Internal State ---
 
-        # New: Initialize ThreadPool for non-blocking operations
+        # Initialize ThreadPool for non-blocking operations
         self.threadpool = QThreadPool()
         # To track the path being currently processed by the worker (prevents race conditions)
         self.current_stat_path = None
-        # NEW: Reference to the update worker for cancellation
+        # Reference to the update worker for cancellation
         self.update_worker = None
 
         # Try to load the application icon from the system theme
@@ -329,11 +467,12 @@ class PlocateGUI(QWidget):
         self.search_input.setClearButtonEnabled(True)
         search_options_layout.addWidget(self.search_input)
 
-        # NEW: Case Insensitive Toggle Button (Dynamic Text) - FOR SEARCH
+        # Case Insensitive Toggle Button (Dynamic Text) - FOR SEARCH
         self.case_insensitive_btn = QPushButton()
         self.case_insensitive_btn.setCheckable(True)  # Make it a toggle button
 
         # Initialize state and text (Aa = Case Sensitive OFF)
+        self.case_insensitive_search = False  # Reverting to default off, since the checkbox version was removed
         self.case_insensitive_btn.setChecked(self.case_insensitive_search)
         self.case_insensitive_btn.setText('Aa')
         self.case_insensitive_btn.setToolTip(
@@ -428,19 +567,6 @@ class PlocateGUI(QWidget):
         # Add the horizontal layout to the main vertical layout
         main_layout.addLayout(status_bar_layout)
 
-        # --- CUSTOM EXCLUSION INPUT with icon and CLEAR BUTTON ---
-        self.custom_exclude_input = QLineEdit()
-        self.custom_exclude_input.setPlaceholderText(_("Paths to exclude (System DB only): E.g.: /mnt/backup /tmp"))
-        exclude_icon = QIcon.fromTheme("folder-close")
-        exclude_action = QAction(exclude_icon, "", self.custom_exclude_input)
-        # Ensure compatibility with PyQt6 ActionPosition enumeration
-        self.custom_exclude_input.addAction(exclude_action, QLineEdit.ActionPosition.LeadingPosition)
-        self.custom_exclude_input.setToolTip(
-            _("Enter space-separated paths to exclude them from the main index (System DB).")
-        )
-        self.custom_exclude_input.setClearButtonEnabled(True)
-        main_layout.addWidget(self.custom_exclude_input)
-
         # --- ACTION BUTTONS CONTAINER ---
         btn_layout = QHBoxLayout()
 
@@ -508,13 +634,13 @@ class PlocateGUI(QWidget):
         DOC_URL = "https://github.com/dmnmsc/plocate-gui"
         QDesktopServices.openUrl(QUrl(DOC_URL))
 
-    # --- STATUS LABEL UTILITY METHOD (NEW) ---
+    # --- STATUS LABEL UTILITY METHOD ---
     def update_status_display(self, text: str):
         """Sets the status label text and automatically sets the tooltip to the same text."""
         self.status_label.setText(text)
         self.status_label.setToolTip(text)
 
-    # --- NEW METADATA STATUS METHODS (NON-BLOCKING) ---
+    # --- METADATA STATUS METHODS (NON-BLOCKING) ---
     def update_metadata_status(self, current_index, previous_index):
         """
         Called when the table selection changes. Uses the current_index to reliably
@@ -535,7 +661,7 @@ class PlocateGUI(QWidget):
             return
 
         try:
-            # FIX: Get the data tuple (name, path, is_dir) directly from the model's internal list using the row index
+            # Get the data tuple (name, path, is_dir) directly from the model's internal list using the row index
             name, path, is_dir = self.model._data[row]
         except IndexError:
             self.update_status_display(default_instructions)
@@ -588,7 +714,7 @@ class PlocateGUI(QWidget):
         """Handles the double-click event. Opens the file or the containing folder."""
         column = index.column()
 
-        # FIX: Distinguish between the 'Name' column (0) to open the file
+        # Distinguish between the 'Name' column (0) to open the file
         # and the 'Path' column (1) to open the containing folder.
         if column == 0:
             self.open_file()
@@ -668,7 +794,7 @@ class PlocateGUI(QWidget):
                 QMessageBox.warning(self, _("Error"), _("Error executing plocate:\n") + str(e))
                 return
 
-        # --- NEW Multi-Keyword Filtering Logic ---
+        # --- Multi-Keyword Filtering Logic ---
         if raw_filter_pattern:
             # Split by space, filter out empty strings (multiple spaces)
             keywords = [k for k in raw_filter_pattern.split() if k]
@@ -759,7 +885,7 @@ class PlocateGUI(QWidget):
 
         return name, path, is_dir
 
-    # --- NEW COPY METHODS ---
+    # --- COPY METHODS ---
     def copy_file_name(self):
         """Copies the file/folder name (only) to the clipboard."""
         name, path, is_dir = self.get_selected_row_data()
@@ -855,7 +981,7 @@ class PlocateGUI(QWidget):
                                 _("Could not launch terminal. None of the common terminal commands (gnome-terminal, konsole, xfce4-terminal) were found. Please install one or check your PATH.")
                                 )
 
-    # --- METHOD TO SHOW CONTEXT MENU (NEW) ---
+    # --- METHOD TO SHOW CONTEXT MENU ---
     def show_context_menu(self, pos):
         """Displays the context menu at the given position if a row is selected."""
         selected_rows = self.result_table.selectionModel().selectedRows()
@@ -934,7 +1060,7 @@ class PlocateGUI(QWidget):
             event.accept()
             return
 
-        # 5. Handle F1 for Documentation (NEW)
+        # 5. Handle F1 for Documentation
         elif key == Qt.Key.Key_F1:
             self.open_documentation()
             event.accept()
@@ -960,8 +1086,7 @@ class PlocateGUI(QWidget):
         is_disabled = is_updating
         self.search_input.setDisabled(is_disabled)
         self.filter_input.setDisabled(is_disabled)
-        self.custom_exclude_input.setDisabled(is_disabled)
-        self.case_insensitive_btn.setDisabled(is_disabled) # <-- Changed from checkbox
+        self.case_insensitive_btn.setDisabled(is_disabled)
         self.open_file_btn.setDisabled(is_disabled)
         self.open_path_btn.setDisabled(is_disabled)
         self.unified_update_btn.setDisabled(is_disabled)
@@ -1062,7 +1187,7 @@ class PlocateGUI(QWidget):
                 self.set_ui_updating_state(False)
 
             # If search input is not empty, rerun search to reflect new DB state (optional but good UX)
-            if not self.search_input.text().strip():
+            if self.search_input.text().strip():
                 self.run_search()
 
         worker.signals.finished.connect(on_finish)
@@ -1070,14 +1195,16 @@ class PlocateGUI(QWidget):
         # Start the worker
         self.threadpool.start(worker)
 
-    def update_system_database(self, next_step_fn=None):
+    # custom_excludes_text argument
+    def update_system_database(self, custom_excludes_text: str = "", next_step_fn=None):
         """Starts the system DB update worker, respecting custom exclusions."""
 
         update_command = ["pkexec", "updatedb"]
         exclusion_paths = []
 
-        custom_excludes_text = self.custom_exclude_input.text().strip()
+        # Use the argument for exclusion paths
         if custom_excludes_text:
+            # Split by space and filter out empty strings
             custom_paths = [p.strip() for p in custom_excludes_text.split() if p.strip()]
             if custom_paths:
                 exclusion_paths.extend(custom_paths)
@@ -1103,59 +1230,46 @@ class PlocateGUI(QWidget):
 
     def update_unified_database(self):
         """
-        Shows a dialog to confirm update and optionally include external media.
-        Launches workers to perform updates in a non-blocking way.
+        Shows a custom QDialog to confirm update, set options, and then launches
+        workers to perform updates in a non-blocking way.
         """
 
-        # Check if an update is already in progress using the new worker reference
+        # Check if an update is already in progress
         if self.update_worker is not None:
             QMessageBox.information(self, _("Info"), _("A database update is already in progress."))
             return
 
-        choice = QMessageBox(self)
-        choice.setWindowTitle(_("Update Database"))
-        # Add HTML line breaks to the main text to separate it visually from the informative text
-        main_text = _("Are you sure you want to update the System database?") + "<br>"
-        choice.setText(main_text)
+        # 1. Instantiate and run the custom dialog
+        dialog = UpdateDatabaseDialog(self, MEDIA_SCAN_PATH)
+        result = dialog.exec()
 
-        choice.setInformativeText(_("This operation requires root privileges and may take some time."))
+        if result == QDialog.DialogCode.Accepted:
+            # 2. Get settings from the dialog
+            settings = dialog.get_settings()
+            system_update = settings['update_system']
+            media_update = settings['update_media']
+            custom_excludes_text = settings['exclude_paths']
 
-        # Create the custom checkbox
-        media_checkbox = QCheckBox(_("Include external media ({path})").format(path=MEDIA_SCAN_PATH), choice)
-        media_checkbox.setChecked(True)
+            # 3. Handle selection logic
+            if not system_update and not media_update:
+                QMessageBox.information(self, _("Info"), _("No databases selected for update."))
+                return
 
-        # Insert the checkbox into the QMessageBox layout
-        layout = choice.layout()
-        row_count = layout.rowCount()
-        # Add the checkbox just before the button row, spanning all columns
-        layout.addWidget(media_checkbox, row_count, 0, 1, layout.columnCount())
-
-        # --- Custom Buttons with Icons for OK/Cancel ---
-        ok_button = QPushButton(_("OK"))
-        ok_button.setIcon(QIcon.fromTheme("dialog-ok-apply"))  # Icon for confirmation
-
-        cancel_button = QPushButton(_("Cancel"))
-        cancel_button.setIcon(QIcon.fromTheme("dialog-cancel"))  # Icon for cancellation
-
-        # Add custom buttons (this replaces the standard buttons in the dialog)
-        choice.addButton(ok_button, QMessageBox.ButtonRole.AcceptRole)
-        choice.addButton(cancel_button, QMessageBox.ButtonRole.RejectRole)
-        choice.setDefaultButton(QMessageBox.StandardButton.Ok)  # Set default focus
-
-        # Execute the dialog
-        choice.exec()
-        clicked_button = choice.clickedButton()
-
-        # Check which button object was clicked
-        if clicked_button == ok_button:
-            media_update = media_checkbox.isChecked()
-
-            if media_update:
-                # 1. Start System DB update. If successful, it automatically calls self.update_media_database.
-                self.update_system_database(next_step_fn=self.update_media_database)
-            else:
-                # 1. Start System DB update. It will restore the UI state when finished.
-                self.update_system_database(next_step_fn=None)
+            if system_update and media_update:
+                # Case 1: Both databases. Start System, then Media on success.
+                self.update_system_database(
+                    custom_excludes_text=custom_excludes_text,
+                    next_step_fn=self.update_media_database  # Chain Media update
+                )
+            elif system_update:
+                # Case 2: System only.
+                self.update_system_database(
+                    custom_excludes_text=custom_excludes_text,
+                    next_step_fn=None
+                )
+            elif media_update:
+                # Case 3: Media only.
+                self.update_media_database()
         else:
             # User clicked Cancel or closed the dialog
             QMessageBox.information(self, _("Info"), _("Database update cancelled."))
