@@ -372,6 +372,7 @@ class UpdateDatabaseDialog(QDialog):
         info_label = QLabel(_("Select the databases to update. This operation requires root privileges."))
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(info_label)
+        main_layout.addSpacing(15)
 
         # 2. System DB Group (plocate.db)
         system_group = QGroupBox(_("SYSTEM INDEX (plocate.db)"))
@@ -421,6 +422,9 @@ class UpdateDatabaseDialog(QDialog):
         self.exclude_input.setToolTip(
             _("Enter space-separated paths to exclude (e.g., external drives, temporary files). These are additional to system defaults.")
         )
+        # Avoid focus
+        self.exclude_input.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
         sys_vbox.addWidget(self.exclude_input)  # Add the input field
 
         # --- End Simplified Exclusion Path Integration ---
@@ -434,6 +438,7 @@ class UpdateDatabaseDialog(QDialog):
         # --- END REORDERING FOR SYSTEM INDEX ---
 
         main_layout.addWidget(system_group)
+        main_layout.addSpacing(15)
 
         # 3. Media Database Option
         media_group = QGroupBox(_("EXTERNAL MEDIA INDEX (media.db)"))
@@ -464,6 +469,7 @@ class UpdateDatabaseDialog(QDialog):
         # --- END REORDERING FOR MEDIA INDEX ---
 
         main_layout.addWidget(media_group)
+        main_layout.addSpacing(15)
 
         # 4. Dialog Buttons (QDialogButtonBox)
         self.buttons = QDialogButtonBox(
