@@ -663,6 +663,33 @@ class PlocateGUI(QWidget):
         # Add the horizontal layout to the main vertical layout
         main_layout.addLayout(status_bar_layout)
 
+        # --- ACTION BUTTONS CONTAINER ---
+        btn_layout = QHBoxLayout()
+
+        # Action Buttons with system icons
+        self.open_file_btn = QPushButton(_("Open File"))
+        self.open_file_btn.setIcon(QIcon.fromTheme("document-open"))
+        self.open_file_btn.setToolTip("ENTER")
+        self.open_file_btn.setToolTipDuration(1500)
+        self.open_file_btn.clicked.connect(self.open_file)
+        btn_layout.addWidget(self.open_file_btn)
+
+        self.open_path_btn = QPushButton(_("Open Folder"))
+        self.open_path_btn.setIcon(QIcon.fromTheme("folder-open"))
+        self.open_path_btn.setToolTip("CTRL+ENTER")
+        self.open_path_btn.setToolTipDuration(1500)
+        self.open_path_btn.clicked.connect(self.open_path)
+        btn_layout.addWidget(self.open_path_btn)
+
+        self.open_in_terminal_btn = QPushButton(_("Open in Terminal"))
+        self.open_in_terminal_btn.setIcon(QIcon.fromTheme("terminal"))
+        self.open_in_terminal_btn.setToolTip(_("CTRL+SHIFT+T"))
+        self.open_in_terminal_btn.setToolTipDuration(1500)
+        self.open_in_terminal_btn.clicked.connect(self.open_in_terminal)
+        btn_layout.addWidget(self.open_in_terminal_btn)
+
+        main_layout.addLayout(btn_layout)
+
         self.setLayout(main_layout)
 
     # --- NEW METHOD: Get Database Modification Status ---
@@ -747,7 +774,7 @@ class PlocateGUI(QWidget):
 
         if text == default_status:
             # Align right for database update time
-            self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         else:
             # Align left for dynamic data (count, metadata, date status)
             self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
