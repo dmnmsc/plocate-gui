@@ -550,7 +550,7 @@ class UpdateDatabaseDialog(QDialog):
         main_layout.addSpacing(15)
 
         # 2. System DB Group (plocate.db)
-        system_group = QGroupBox(_("SYSTEM INDEX (plocate.db)"))
+        system_group = QGroupBox(_("⚙️️ SYSTEM INDEX (plocate.db)"))
         sys_vbox = QVBoxLayout(system_group)
         sys_vbox.addSpacing(15)
 
@@ -597,7 +597,7 @@ class UpdateDatabaseDialog(QDialog):
         main_layout.addSpacing(15)
 
         # 3. Media Database Option
-        media_group = QGroupBox(_("EXTERNAL MEDIA INDEX (media.db)"))
+        media_group = QGroupBox(_("💾 EXTERNAL MEDIA INDEX (media.db)"))
         media_vbox = QVBoxLayout(media_group)
         media_vbox.addSpacing(15)
 
