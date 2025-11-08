@@ -4,6 +4,7 @@ import subprocess
 import re
 import gettext
 import datetime
+import configparser
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
@@ -23,6 +24,91 @@ _ = gettext.gettext
 DEFAULT_DB_PATH = "/var/lib/plocate/plocate.db"
 MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
+CONFIG_FILE_NAME = "settings.conf"
+
+
+# --- MODIFIED: Configuration Management Class (AppSettings) ---
+class AppSettings:
+    """Handles reading and writing application settings using configparser."""
+
+    def __init__(self, filename=CONFIG_FILE_NAME):
+        self.filename = os.path.join(os.path.expanduser('~'), f'.plocate-gui/{filename}')
+        self.config = configparser.ConfigParser()
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(self.filename), exist_ok=True)
+        self.settings = self._load_defaults()
+        self.load()
+
+    def _load_defaults(self):
+        """Returns the default settings."""
+        return {
+            'exclude_paths': '',
+            'media_index_paths': MEDIA_SCAN_PATH,
+            'update_system': True,  # NEW: Default to True
+            'update_media': True  # NEW: Default to True
+        }
+
+    def load(self):
+        """Reads the configuration file and updates internal settings."""
+        try:
+            self.config.read(self.filename)
+
+            # Load Exclusions
+            if 'Exclusions' in self.config:
+                self.settings['exclude_paths'] = self.config.get('Exclusions', 'additional_exclude_paths',
+                                                                 fallback=self.settings['exclude_paths'])
+
+            # Load Paths and DB selection status
+            if 'Paths' in self.config:
+                self.settings['media_index_paths'] = self.config.get('Paths', 'media_index_path',
+                                                                     fallback=self.settings['media_index_paths'])
+
+            # NEW SECTION: Load Checkbox States (Stored in [General] section)
+            if 'General' in self.config:
+                # configparser.getboolean correctly handles 'True'/'False' strings
+                self.settings['update_system'] = self.config.getboolean('General', 'update_system_index',
+                                                                        fallback=self.settings['update_system'])
+                self.settings['update_media'] = self.config.getboolean('General', 'update_media_index',
+                                                                       fallback=self.settings['update_media'])
+
+        except Exception as e:
+            print(f"Error loading configuration file: {e}. Using defaults.")
+
+    def save(self, settings_to_save):
+        """Writes the current settings dictionary to the configuration file."""
+        # 1. Update internal settings with the new values
+        self.settings.update(settings_to_save)
+
+        # 2. Prepare the configparser object (overwrite existing structure)
+
+        # Section for general flags (checkbox states)
+        self.config['General'] = {
+            'update_system_index': str(self.settings['update_system']),
+            'update_media_index': str(self.settings['update_media'])
+        }
+
+        # Section for Exclusions
+        self.config['Exclusions'] = {
+            'additional_exclude_paths': self.settings['exclude_paths']
+        }
+
+        # Section for Paths
+        self.config['Paths'] = {
+            'media_index_path': self.settings['media_index_paths']
+        }
+
+        # 3. Write to file
+        try:
+            with open(self.filename, 'w') as configfile:
+                self.config.write(configfile)
+        except Exception as e:
+            QMessageBox.critical(None, _("Save Error"),
+                                 _("Could not save configuration to {filename}.\nDetails: {error}").format(
+                                     filename=self.filename, error=str(e)))
+
+
+# --- END MODIFIED AppSettings Class ---
+
 
 # MAPPING FOR CATEGORY SHORTCUTS IN SEARCH BAR (e.g., '::doc')
 # Key: User shortcut (without '::'). Value: Translatable category name.
@@ -162,7 +248,8 @@ def human_readable_size(size, decimal_places=2):
 def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     """Returns a QIcon based on the file extension or if it is a directory."""
 
-    if not filepath or filepath == _("No results found") or filepath == _("Search failed") or filepath == _("No results match filter"):
+    if not filepath or filepath == _("No results found") or filepath == _("Search failed") or filepath == _(
+            "No results match filter"):
         return QIcon.fromTheme("dialog-warning")
 
     # 1. Directory Icon
@@ -440,6 +527,8 @@ class SearchWorker(QRunnable):
             self.signals.finished.emit([], _("Regex filter contains an invalid pattern: ") + str(e), False)
         except Exception as e:
             self.signals.finished.emit([], _("An unexpected search error occurred: ") + str(e), False)
+
+
 # --- END NEW SEARCH WORKER ---
 
 
@@ -531,15 +620,18 @@ class PlocateResultsModel(QAbstractTableModel):
         self.layoutChanged.emit()
 
 
-# --- CLASS: Custom Dialog for DB Update (Focus Optimized) ---
+# --- MODIFIED: Custom Dialog for DB Update (Focus Optimized) ---
 class UpdateDatabaseDialog(QDialog):
     """A custom dialog for configuring the updatedb process."""
 
-    def __init__(self, parent=None, media_path=MEDIA_SCAN_PATH):
+    def __init__(self, parent=None, initial_settings: dict = None):
         super().__init__(parent)
         self.setWindowTitle(_("Database Update Options"))
         self.setWindowIcon(QIcon.fromTheme("view-refresh"))
         self.setMinimumWidth(400)
+
+        # Use the initial settings passed from the main window
+        self.initial_settings = initial_settings if initial_settings is not None else AppSettings()._load_defaults()
 
         main_layout = QVBoxLayout(self)
 
@@ -556,7 +648,8 @@ class UpdateDatabaseDialog(QDialog):
 
         # Checkbox for System (Highlighted with Bold)
         self.system_checkbox = QCheckBox(_("Update System Index"))
-        self.system_checkbox.setChecked(True)
+        # MODIFICATION: Load initial state from settings
+        self.system_checkbox.setChecked(self.initial_settings.get('update_system', True))
         self.system_checkbox.setIcon(QIcon.fromTheme("drive-harddisk"))
         self.system_checkbox.setStyleSheet("font-weight: bold;")
 
@@ -584,6 +677,7 @@ class UpdateDatabaseDialog(QDialog):
 
         # Input Field for exclusions
         self.exclude_input = QLineEdit()
+        self.exclude_input.setText(self.initial_settings['exclude_paths'])
         self.exclude_input.setPlaceholderText(_("E.g.: /mnt/backup /tmp"))
         self.exclude_input.setToolTip(
             _("Enter space-separated paths to exclude (e.g., external drives, temporary files). These are additional to system defaults.")
@@ -603,7 +697,8 @@ class UpdateDatabaseDialog(QDialog):
 
         # Checkbox for Media (Highlighted with Bold)
         self.media_checkbox = QCheckBox(_("Update External Media Index"))
-        self.media_checkbox.setChecked(True)
+        # MODIFICATION: Load initial state from settings
+        self.media_checkbox.setChecked(self.initial_settings.get('update_media', True))
         self.media_checkbox.setIcon(QIcon.fromTheme("media-removable"))
         self.media_checkbox.setStyleSheet("font-weight: bold;")
 
@@ -615,7 +710,7 @@ class UpdateDatabaseDialog(QDialog):
 
         # Input field for paths
         self.media_paths_input = QLineEdit()
-        self.media_paths_input.setText(media_path)
+        self.media_paths_input.setText(self.initial_settings['media_index_paths'])
         self.media_paths_input.setPlaceholderText(
             _("E.g.: /run/media /mnt/MyExternalDrive")
         )
@@ -657,12 +752,12 @@ class UpdateDatabaseDialog(QDialog):
         # ------------------------------------------------------------------------------------------
 
     def get_settings(self):
-        """Returns the settings needed by the main window."""
+        """Returns the settings needed by the main window, including current text inputs and checkbox states."""
         return {
             'update_system': self.system_checkbox.isChecked(),
             'update_media': self.media_checkbox.isChecked(),
             'exclude_paths': self.exclude_input.text().strip(),
-            'media_index_paths': self.media_paths_input.text().strip()  # NEW
+            'media_index_paths': self.media_paths_input.text().strip()
         }
 
 
@@ -672,6 +767,10 @@ class UpdateDatabaseDialog(QDialog):
 class PlocateGUI(QWidget):
     def __init__(self):
         super().__init__()
+
+        # NEW: Initialize AppSettings to load configuration
+        self.app_settings = AppSettings()
+
         self.setWindowTitle(_("Plocate GUI"))
         self.resize(800, 700)
 
@@ -760,7 +859,7 @@ Keywords are space-separated. Regex must be the final term.""")
             _("Toggle Case Insensitive Search (-i): Aa = Sensitive | aa = Insensitive"))
 
         # Set a fixed, slightly larger size for text visibility
-        #self.case_insensitive_btn.setFixedSize(36,36)
+        # self.case_insensitive_btn.setFixedSize(36,36)
         self.case_insensitive_btn.setFixedWidth(36)
         # Initial text update based on default state
         self.update_case_insensitive_text()
@@ -1777,8 +1876,8 @@ Keywords are space-separated. Regex must be the final term.""")
             QMessageBox.information(self, _("Info"), _("A database update is already in progress."))
             return
 
-        # 1. Instantiate and run the custom dialog
-        dialog = UpdateDatabaseDialog(self, MEDIA_SCAN_PATH)
+        # 1. Instantiate and run the custom dialog, passing current settings
+        dialog = UpdateDatabaseDialog(self, self.app_settings.settings)
         result = dialog.exec()
 
         if result == QDialog.DialogCode.Accepted:
@@ -1787,7 +1886,15 @@ Keywords are space-separated. Regex must be the final term.""")
             system_update = settings['update_system']
             media_update = settings['update_media']
             custom_excludes_text = settings['exclude_paths']
-            media_index_paths = settings['media_index_paths']  # NEW
+            media_index_paths = settings['media_index_paths']
+
+            # NEW: Save ALL settings immediately after acceptance, including checkbox states
+            self.app_settings.save({
+                'update_system': system_update,
+                'update_media': media_update,
+                'exclude_paths': custom_excludes_text,
+                'media_index_paths': media_index_paths
+            })
 
             # 3. Handle selection logic
             if not system_update and not media_update:
