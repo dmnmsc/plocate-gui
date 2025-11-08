@@ -760,7 +760,8 @@ Keywords are space-separated. Regex must be the final term.""")
             _("Toggle Case Insensitive Search (-i): Aa = Sensitive | aa = Insensitive"))
 
         # Set a fixed, slightly larger size for text visibility
-        self.case_insensitive_btn.setFixedSize(36, 36)
+        #self.case_insensitive_btn.setFixedSize(36,36)
+        self.case_insensitive_btn.setFixedWidth(36)
         # Initial text update based on default state
         self.update_case_insensitive_text()
 
