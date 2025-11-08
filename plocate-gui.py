@@ -336,7 +336,7 @@ class SearchWorker(QRunnable):
         self.category_regex = category_regex
         self.case_insensitive = case_insensitive
         self.signals = SearchSignals()
-        self._is_canceled = False # Internal cancellation flag
+        self._is_canceled = False  # Internal cancellation flag
 
     def cancel(self):
         """Sets the internal cancellation flag."""
@@ -357,7 +357,7 @@ class SearchWorker(QRunnable):
 
             # Execute plocate (this is the potentially long-running blocking call)
             result = subprocess.run(
-                plocate_command, text=True, capture_output=True, check=False, timeout=120 # Added timeout
+                plocate_command, text=True, capture_output=True, check=False, timeout=120  # Added timeout
             )
 
             # Check for cancellation *after* plocate finishes
@@ -368,9 +368,9 @@ class SearchWorker(QRunnable):
             files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
             if result.returncode != 0 and not files:
-                 # Check if the error is just a "not found" which is common/normal
+                # Check if the error is just a "not found" which is common/normal
                 if result.returncode == 1 and not result.stdout and not result.stderr:
-                    files = [] # Treat as zero results
+                    files = []  # Treat as zero results
                 else:
                     error_message = result.stderr or result.stdout or _("Unknown plocate error.")
                     self.signals.finished.emit([], _("Error executing plocate:\n") + error_message, False)
@@ -684,7 +684,7 @@ class PlocateGUI(QWidget):
         # Reference to the update worker for cancellation
         self.update_worker = None
         # Reference to the search worker for cancellation
-        self.search_worker = None # NEW: Reference for search worker
+        self.search_worker = None  # NEW: Reference for search worker
 
         # Try to load the application icon from the system theme
         icon = QIcon.fromTheme("plocate-gui")
@@ -820,9 +820,9 @@ class PlocateGUI(QWidget):
         status_bar_layout.addWidget(self.progress_bar)
 
         # 3. NEW: Cancel Button for DB update
-        self.cancel_update_btn = QPushButton(_("Cancel Update")) # Modified text
+        self.cancel_update_btn = QPushButton(_("Cancel Update"))  # Modified text
         self.cancel_update_btn.setIcon(QIcon.fromTheme("dialog-cancel"))
-        self.cancel_update_btn.setMaximumWidth(150) # Increased width
+        self.cancel_update_btn.setMaximumWidth(150)  # Increased width
         self.cancel_update_btn.hide()  # Initially hidden
         # Connect the cancel button to a single unified handler
         self.cancel_update_btn.clicked.connect(self.cancel_background_task)
@@ -1077,7 +1077,7 @@ class PlocateGUI(QWidget):
             return
 
         is_disabled = is_searching
-        self.unified_update_btn.setDisabled(is_disabled) # Disable update button
+        self.unified_update_btn.setDisabled(is_disabled)  # Disable update button
 
         # Set search-specific controls based on search state
         self.search_input.setDisabled(is_disabled)
@@ -1088,7 +1088,7 @@ class PlocateGUI(QWidget):
             # Show search progress
             self.progress_bar.setFormat(_("Searching..."))
             self.progress_bar.show()
-            self.cancel_update_btn.setText(_("Cancel Search")) # Updated text for context
+            self.cancel_update_btn.setText(_("Cancel Search"))  # Updated text for context
             self.cancel_update_btn.show()
 
             # Clear existing metadata/result count message
@@ -1097,7 +1097,7 @@ class PlocateGUI(QWidget):
             # Hide search progress
             self.progress_bar.hide()
             self.cancel_update_btn.hide()
-            self.cancel_update_btn.setText(_("Cancel Update")) # Restore default text
+            self.cancel_update_btn.setText(_("Cancel Update"))  # Restore default text
 
             # The status will be updated by the search_finished slot
 
@@ -1149,7 +1149,6 @@ class PlocateGUI(QWidget):
             # Apply the responsive sizing (initial adjustment)
             self._apply_responsive_column_sizing()
 
-
     def run_search(self):
         """
         Parses the query and launches the non-blocking SearchWorker.
@@ -1184,7 +1183,7 @@ class PlocateGUI(QWidget):
             plocate_term = keywords[0]
             post_plocate_filters = keywords[1:]
         else:
-            plocate_term = "." # Universal term when only a category shortcut is used
+            plocate_term = "."  # Universal term when only a category shortcut is used
             post_plocate_filters = []
 
         # The category regex comes from the current ComboBox state (set by category_changed or the shortcut block above)
@@ -1197,7 +1196,7 @@ class PlocateGUI(QWidget):
             category_regex,
             self.case_insensitive_search
         )
-        self.search_worker = worker # Store reference for cancellation
+        self.search_worker = worker  # Store reference for cancellation
         worker.signals.finished.connect(self.search_finished)
 
         # Set UI state to searching
@@ -1412,9 +1411,27 @@ class PlocateGUI(QWidget):
             event.accept()
             return
 
-        # 6. Handle Escape key to close the application
+        # 6. Handle Escape key (Cancel task, Clear results, or Close app)
         elif key == Qt.Key.Key_Escape:
-            self.close()
+
+            # 1. PRIORITY: Cancel any background task (Update or Search)
+            # Checks if either the update worker or the search worker is active.
+            if self.update_worker is not None or self.search_worker is not None:
+                self.cancel_background_task()
+                event.accept()
+                return  # Stop here if a task was canceled
+
+            # 2. Clear results and reset search state if results are present
+            if len(self.model._data) > 0:
+                self.model.set_data([])
+                self.search_input.clear()
+                self.category_combobox.setCurrentIndex(0)
+                self.update_status_display(self.get_db_mod_date_status())
+                self.search_input.setFocus()
+            else:
+                # 3. Close the application if no results are visible
+                self.close()
+
             event.accept()
             return
 
@@ -1444,17 +1461,16 @@ class PlocateGUI(QWidget):
             # 2. Show the progress bar and cancel button
             self.progress_bar.setFormat(_("Updating database..."))
             self.progress_bar.show()
-            self.cancel_update_btn.setText(_("Cancel Update")) # Ensure correct text
+            self.cancel_update_btn.setText(_("Cancel Update"))  # Ensure correct text
             self.cancel_update_btn.show()  # <-- Show Cancel button
         else:
             # 1. Hide the progress bar and cancel button
             self.progress_bar.hide()
             self.cancel_update_btn.hide()  # <-- Hide Cancel button
-            self.cancel_update_btn.setText(_("Cancel Search")) # Restore search default text
+            self.cancel_update_btn.setText(_("Cancel Search"))  # Restore search default text
 
             # 2. Restore the database update status text
             self.update_status_display(self.get_db_mod_date_status())
-
 
     def handle_db_update_start(self):
         """Called by a DB worker's signal when it starts. Updates the status message."""
