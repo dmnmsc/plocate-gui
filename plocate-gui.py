@@ -1498,20 +1498,25 @@ Keywords are space-separated. Regex must be the final term.""")
         modifiers = event.modifiers()
         is_enter = key in [Qt.Key.Key_Return, Qt.Key.Key_Enter]
 
+        # FIX: Check if the focus is on the results table before processing file opening actions.
+        is_table_focused = self.result_table.hasFocus() or self.result_table.viewport().hasFocus()
+
         # 1. Handle Ctrl + Enter (Opens Path) - PRIORITY
         if is_enter and (modifiers & Qt.KeyboardModifier.ControlModifier) and selected_rows:
-            self.open_path()
-            event.accept()
-            return
+            if is_table_focused:
+                self.open_path()
+                event.accept()
+                return
 
         # 2. Handle Enter/Return key press (Opens File) - DEFAULT
         elif is_enter and selected_rows:
             # Check explicitly that the Control key is NOT pressed to avoid
             # interference with Ctrl+Enter, which may fall through here.
-            if not (modifiers & Qt.KeyboardModifier.ControlModifier):
-                self.open_file()
-                event.accept()
-                return
+            if is_table_focused:
+                if not (modifiers & Qt.KeyboardModifier.ControlModifier):
+                    self.open_file()
+                    event.accept()
+                    return
 
         # 3. Handle Ctrl + Shift + T (Opens Path in Terminal) - NEW PRIORITY
         is_ctrl_shift_t = (key == Qt.Key.Key_T and
@@ -1519,9 +1524,10 @@ Keywords are space-separated. Regex must be the final term.""")
                            (modifiers & Qt.KeyboardModifier.ShiftModifier))
 
         if is_ctrl_shift_t and selected_rows:
-            self.open_in_terminal()
-            event.accept()
-            return
+            if is_table_focused:
+                self.open_in_terminal()
+                event.accept()
+                return
 
         # 4. Handle F5 for database update
         elif key == Qt.Key.Key_F5:
