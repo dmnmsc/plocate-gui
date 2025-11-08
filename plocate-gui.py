@@ -950,13 +950,22 @@ Keywords are space-separated. Regex must be the final term.""")
 
     # Slot to handle category change
     def category_changed(self, index):
-        """Updates the internal state and re-runs the search with the new category filter."""
+        """Updates the internal state and handles filtering based on stored results."""
         # The ComboBox returns the translated string, so we pass that to get_category_regex
         selected_category_display_name = self.category_combobox.currentText()
         self.current_category_regex = get_category_regex(selected_category_display_name)
 
-        # Rerun search immediately if there is a term (via the non-blocking runner)
-        if self.search_input.text().strip():
+        # NEW BEHAVIOR: If raw results are already stored, we only apply the in-memory filter.
+        # This is faster as it avoids the subprocess.run(['plocate', ...]) call.
+        if self._raw_plocate_results:
+            # Rerunning plocate is set to False as we are only filtering existing data.
+            self.run_in_memory_filter(rerun_plocate=False)
+
+            # Original behavior if no results are stored or the main search box has text.
+        elif self.search_input.text().strip():
+            # The search term is active, so we must rerun the search.
+            # NOTE: run_search is needed because the category filter is applied INSIDE
+            # the SearchWorker logic before storing in _raw_plocate_results.
             self.run_search()
 
     def open_documentation(self):
@@ -1102,25 +1111,28 @@ Keywords are space-separated. Regex must be the final term.""")
         self._apply_responsive_column_sizing()
 
     # --- NEW: In-Memory Filter Logic ---
-    def run_in_memory_filter(self):
+    def run_in_memory_filter(self, rerun_plocate=True):
         """
         Filters the raw plocate results based on the text in the filter_input
-        and updates the table model. Does NOT rerun plocate.
+        and the current category_combobox selection, then updates the table model.
         """
         filter_text = self.filter_input.text().strip()
 
-        # 1. If no search has been run, or if the filter is empty, display all raw results
-        if not self._raw_plocate_results or not filter_text:
-            if not self._raw_plocate_results:
+        # 0. Determine the source of the data to filter
+        data_to_filter = self._raw_plocate_results
+
+        # 1. If there are no raw results OR no active filters, restore the original view.
+        # We only restore if neither the text filter nor the category filter is active.
+        if not data_to_filter or (not filter_text and not self.current_category_regex):
+            if not data_to_filter:
                 self.model.set_data([])
                 self.update_status_display(self.get_db_mod_date_status())
             else:
-                self.model.set_data(self._raw_plocate_results)
-                # Recalculate result count message
-                status_message = _("Found {} results").format(len(self._raw_plocate_results))
+                self.model.set_data(data_to_filter)
+                status_message = _("Found {} results").format(len(data_to_filter))
                 self.update_status_display(status_message)
 
-            # Restore sorting and sizing
+            # Restore sorting and column sizing
             self._apply_responsive_column_sizing()
             if self.current_sort_column != -1:
                 self.model.sort(self.current_sort_column, self.current_sort_order)
@@ -1129,31 +1141,54 @@ Keywords are space-separated. Regex must be the final term.""")
                 self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
             return
 
-        # 2. Apply filtering
-        # Filter is always case-insensitive for in-memory filtering for better usability
+        # 2. Apply category filtering (on the full dataset)
+        category_regex = self.current_category_regex
+
+        if category_regex is not None:
+            if category_regex == "DIR_ONLY":
+                data_to_filter = [
+                    (name, path, is_dir) for name, path, is_dir in data_to_filter
+                    if is_dir
+                ]
+            else:
+                try:
+                    category_filter_regex = re.compile(category_regex, re.IGNORECASE)
+                    data_to_filter = [
+                        (name, path, is_dir) for name, path, is_dir in data_to_filter
+                        if category_filter_regex.search(os.path.join(path, name))
+                    ]
+                except re.error:
+                    # If the regex is invalid, the category filter is ignored
+                    pass
+
+                    # 3. Apply text filtering (on the results already filtered by category)
         filtered_results = []
-        filter_text_lower = filter_text.lower()
+        if filter_text:
+            filter_text_lower = filter_text.lower()
+            # The internal list is (name, path, is_dir)
+            for name, path, is_dir in data_to_filter:
+                full_path = os.path.join(path, name)
+                if filter_text_lower in name.lower() or filter_text_lower in full_path.lower():
+                    filtered_results.append((name, path, is_dir))
+        else:
+            # If there is no filter text, the filtered results are those filtered by category
+            filtered_results = data_to_filter
 
-        # The internal list is (name, path, is_dir)
-        for name, path, is_dir in self._raw_plocate_results:
-            # Check if filter_text is in the file name OR the full path
-            full_path = os.path.join(path, name)
-            if filter_text_lower in name.lower() or filter_text_lower in full_path.lower():
-                filtered_results.append((name, path, is_dir))
+        # 4. Update model with filtered results
+        raw_count = len(self._raw_plocate_results)
 
-        # 3. Update model with filtered results
         if not filtered_results:
             self.model.set_data([(_("No results match filter"), "", False)])
-            self.update_status_display(_("No results match filter"))
+            self.update_status_display(_("No results match filter (filtered from {})").format(raw_count))
         else:
             self.model.set_data(filtered_results)
-            # Update status bar with filtered count
+            # Update status bar with the filtered count
             status_message = _("Found {} results (filtered from {})").format(
-                len(filtered_results), len(self._raw_plocate_results)
+                len(filtered_results), raw_count
             )
             self.update_status_display(status_message)
 
-            # Restore sorting and sizing
+            # Restore sorting and column sizing
             self._apply_responsive_column_sizing()
             if self.current_sort_column != -1:
                 self.model.sort(self.current_sort_column, self.current_sort_order)
