@@ -714,7 +714,14 @@ class PlocateGUI(QWidget):
         # MODIFICATION: Add ToolTip to reflect integrated filtering
         self.search_input.setPlaceholderText(_("Enter search term..."))
         self.search_input.setToolTip(
-            _("Enter search term. You can add space-separated keywords or a final regex (e.g., .pdf$) for advanced filtering.")
+            _("""Use keywords, category shortcuts, or advanced filters.
+
+Examples:
+    - Keywords: "project report"
+    - Category: ::doc final_report
+    - Regex: "invoice 2024" .pdf$
+
+Keywords are space-separated. Regex must be the final term.""")
         )
         search_icon = QIcon.fromTheme("edit-find")
         search_action = QAction(search_icon, "", self.search_input)
