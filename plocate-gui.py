@@ -24,6 +24,21 @@ DEFAULT_DB_PATH = "/var/lib/plocate/plocate.db"
 MEDIA_DB_PATH = "/var/lib/plocate/media.db"
 MEDIA_SCAN_PATH = "/run/media"
 
+# MAPPING FOR CATEGORY SHORTCUTS IN SEARCH BAR (e.g., '::doc')
+# Key: User shortcut (without '::'). Value: Translatable category name.
+CATEGORY_SHORTCUTS = {
+    "all": _("All Categories"),
+    "dir": _("Directories"),
+    "doc": _("Documents"),
+    "img": _("Images"),
+    "video": _("Videos"),
+    "audio": _("Audio"),
+    "code": _("Code"),
+    "zip": _("Archives"),
+}
+# Command prefix for category shortcut.
+SHORTCUT_PREFIX = "::"
+
 # --- CATEGORY FILTERING LOGIC (FIXED and TRANSLATED) ---
 # Map display names to a list of extensions (DO NOT include '$' here, it will be added in get_category_regex)
 FILE_CATEGORIES = {
@@ -65,25 +80,42 @@ def get_category_regex(category_name: str) -> str | None:
     return r"(?:" + r"|".join(patterns) + r")$"
 
 
-def tokenize_search_query(query: str) -> list[str]:
+def tokenize_search_query(query: str) -> tuple[list[str], str | None]:
     """
-    Splits the query into tokens, preserving phrases enclosed in double quotes.
-    Quoted phrases are returned without the quotes.
-    Example: 'docs "2024 file" pdf' -> ['2024 file', 'docs', 'pdf']
+    Splits the query into tokens, preserving phrases in quotes and extracting the category shortcut.
+    Returns: (list of search tokens, category shortcut name or None)
     """
-    # 1. Regex to find content inside quotes (non-greedy)
+    category_shortcut_name = None
+
+    # 1. Look for the category shortcut pattern (e.g., ::doc)
+    # The regex searches for the SHORTCUT_PREFIX followed by letters/digits at the start or after a space.
+    safe_prefix = re.escape(SHORTCUT_PREFIX)
+    # Pattern: (^|\s) (::[a-z0-9]+) (\s|$)
+    shortcut_pattern = r"(^|\s)(" + safe_prefix + r"([a-z0-9]+))(\s|$)"
+
+    # Use IGNORECASE for flexibility in shortcut typing
+    match = re.search(shortcut_pattern, query, re.IGNORECASE)
+
+    if match:
+        # Extract the full shortcut token (e.g., '::doc') and the category key ('doc')
+        full_shortcut_token = match.group(2)
+        category_key = match.group(3).lower()
+
+        # Check if the key is a valid shortcut
+        if category_key in CATEGORY_SHORTCUTS:
+            category_shortcut_name = CATEGORY_SHORTCUTS[category_key]
+            # Remove the shortcut token from the query BEFORE processing quotes
+            # Use re.sub with a limit of 1 to ensure only the matched token is removed
+            query = query.replace(full_shortcut_token, '', 1).strip()
+
+    # 2. Extract quoted phrases and single words from the remaining query
+    # If the user searches for "::doc", it will be processed here as a literal search term.
     quoted_phrases = re.findall(r'"([^"]*)"', query)
-
-    # 2. Remove quoted phrases from the original query to process the rest of the words
-    # Replace quoted parts with a space to ensure remaining words are separated correctly
     unquoted_query = re.sub(r'"[^"]*"', ' ', query)
-
-    # 3. Split the remaining text by spaces and filter out empty strings
     single_words = [word for word in unquoted_query.split() if word]
 
-    # Combine quoted phrases and single words. plocate will treat the first token
-    # (whether a phrase or single word) as the main search term.
-    return quoted_phrases + single_words
+    # Combine search tokens and return the category name (translatable)
+    return quoted_phrases + single_words, category_shortcut_name
 
 
 # --- Icon Utility Function for Category Menu ---
@@ -926,24 +958,41 @@ class PlocateGUI(QWidget):
         self._apply_responsive_column_sizing()
 
     def run_search(self):
-        # MODIFICATION: Get the full query from the main search bar
         full_query = self.search_input.text().strip()
 
-        # Split the query into keywords (tokens), supporting quoted phrases
-        keywords = tokenize_search_query(full_query)
+        # Split the query into keywords, supporting quotes, and extract the category shortcut
+        keywords, category_shortcut_name = tokenize_search_query(full_query)
 
         DEFAULT_STATUS_TEXT = self.get_db_mod_date_status()
 
-        if not keywords:
+        # Exit if there are no keywords AND no category shortcut
+        if not keywords and not category_shortcut_name:
             self.model.set_data([])
-            self.update_status_display(DEFAULT_STATUS_TEXT)  # Use DB dates
+            self.update_status_display(DEFAULT_STATUS_TEXT)
             return
 
-        # 1. Determine the main plocate term and post-plocate filter terms
-        plocate_term = keywords[0]
-        post_plocate_filters = keywords[1:]
+        # --- Apply Category Shortcut from Search Bar ---
+        # This block only updates the ComboBox state, which in turn sets self.current_category_regex.
+        if category_shortcut_name:
+            # Find the index of the category name (translatable) and set the ComboBox
+            index = self.category_combobox.findText(category_shortcut_name)
+            if index != -1:
+                self.category_combobox.setCurrentIndex(index)
+        # --- End Apply Category Shortcut from Search Bar ---
 
-        # 2. Build and run the base plocate command
+        # 1. Determine the main plocate term and post-plocate filter terms
+        # This block MUST run whether or not a shortcut was used (LÍNEAS CORREGIDAS)
+        if keywords:
+            # Normal case: Use the first token as the plocate search term
+            plocate_term = keywords[0]
+            post_plocate_filters = keywords[1:]
+        else:
+            # Case where only a category shortcut was provided (e.g., "::doc").
+            # Use a universal search term (like '.') to retrieve all possible entries.
+            plocate_term = "."
+            post_plocate_filters = []
+
+        # 2. Build and run the base plocate command (LÍNEA CORREGIDA)
         plocate_command = ["plocate", plocate_term]
 
         # Add case-insensitivity option
