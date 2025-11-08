@@ -65,6 +65,27 @@ def get_category_regex(category_name: str) -> str | None:
     return r"(?:" + r"|".join(patterns) + r")$"
 
 
+def tokenize_search_query(query: str) -> list[str]:
+    """
+    Splits the query into tokens, preserving phrases enclosed in double quotes.
+    Quoted phrases are returned without the quotes.
+    Example: 'docs "2024 file" pdf' -> ['2024 file', 'docs', 'pdf']
+    """
+    # 1. Regex to find content inside quotes (non-greedy)
+    quoted_phrases = re.findall(r'"([^"]*)"', query)
+
+    # 2. Remove quoted phrases from the original query to process the rest of the words
+    # Replace quoted parts with a space to ensure remaining words are separated correctly
+    unquoted_query = re.sub(r'"[^"]*"', ' ', query)
+
+    # 3. Split the remaining text by spaces and filter out empty strings
+    single_words = [word for word in unquoted_query.split() if word]
+
+    # Combine quoted phrases and single words. plocate will treat the first token
+    # (whether a phrase or single word) as the main search term.
+    return quoted_phrases + single_words
+
+
 # --- Icon Utility Function for Category Menu ---
 def get_icon_for_category(category_name: str) -> QIcon:
     """Returns a QIcon based on the translated category name."""
@@ -908,8 +929,8 @@ class PlocateGUI(QWidget):
         # MODIFICATION: Get the full query from the main search bar
         full_query = self.search_input.text().strip()
 
-        # Split the query into keywords (tokens)
-        keywords = [k for k in full_query.split() if k]
+        # Split the query into keywords (tokens), supporting quoted phrases
+        keywords = tokenize_search_query(full_query)
 
         DEFAULT_STATUS_TEXT = self.get_db_mod_date_status()
 
