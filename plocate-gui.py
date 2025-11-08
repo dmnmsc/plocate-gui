@@ -1110,20 +1110,44 @@ Keywords are space-separated. Regex must be the final term.""")
         # Re-apply the size constraints when the window size changes
         self._apply_responsive_column_sizing()
 
-    # --- NEW: In-Memory Filter Logic ---
+    # --- NEW: In-Memory Filter Logic (COMBINED WITH CATEGORY SHORTCUT AND MULTI-KEYWORD) ---
     def run_in_memory_filter(self, rerun_plocate=True):
         """
         Filters the raw plocate results based on the text in the filter_input
         and the current category_combobox selection, then updates the table model.
         """
-        filter_text = self.filter_input.text().strip()
+        full_filter_text = self.filter_input.text().strip()
 
         # 0. Determine the source of the data to filter
         data_to_filter = self._raw_plocate_results
 
+        # 1. Tokenize Search and Extract Category Shortcut (NEW LOGIC)
+        # Use the existing function to separate the category shortcut (if any) from the remaining keywords
+        filter_keywords_list, filter_shortcut_name = tokenize_search_query(full_filter_text)
+
+        # Determine the effective category filter for this execution
+        # 1. Start with the currently selected category from the ComboBox
+        effective_category_regex = self.current_category_regex
+
+        # 2. If a shortcut is found in the filter text, it overrides the ComboBox selection for this run
+        if filter_shortcut_name:
+            # a. Get the category regex (the name is already translated by CATEGORY_SHORTCUTS)
+            selected_category_display_name = filter_shortcut_name
+            effective_category_regex = get_category_regex(selected_category_display_name)
+
+            # b. Visually update the ComboBox (blocking signals to prevent recursive calls)
+            index = self.category_combobox.findText(filter_shortcut_name)
+            if index != -1 and self.category_combobox.currentIndex() != index:
+                self.category_combobox.blockSignals(True)
+                self.category_combobox.setCurrentIndex(index)
+                self.category_combobox.blockSignals(False)
+        # --- END NEW LOGIC ---
+
         # 1. If there are no raw results OR no active filters, restore the original view.
-        # We only restore if neither the text filter nor the category filter is active.
-        if not data_to_filter or (not filter_text and not self.current_category_regex):
+        # Check: no text tokens AND no active category filter (i.e., effective_category_regex is None)
+        is_all_category = effective_category_regex is None
+
+        if not data_to_filter or (not filter_keywords_list and is_all_category):
             if not data_to_filter:
                 self.model.set_data([])
                 self.update_status_display(self.get_db_mod_date_status())
@@ -1136,23 +1160,24 @@ Keywords are space-separated. Regex must be the final term.""")
             self._apply_responsive_column_sizing()
             if self.current_sort_column != -1:
                 self.model.sort(self.current_sort_column, self.current_sort_order)
-                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column, self.current_sort_order)
+                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column,
+                                                                      self.current_sort_order)
             else:
                 self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
             return
 
         # 2. Apply category filtering (on the full dataset)
-        category_regex = self.current_category_regex
-
-        if category_regex is not None:
-            if category_regex == "DIR_ONLY":
+        # Use the effective regex determined above
+        if effective_category_regex is not None:
+            if effective_category_regex == "DIR_ONLY":
                 data_to_filter = [
                     (name, path, is_dir) for name, path, is_dir in data_to_filter
                     if is_dir
                 ]
             else:
                 try:
-                    category_filter_regex = re.compile(category_regex, re.IGNORECASE)
+                    # Note: Category filtering is done case-insensitive (re.IGNORECASE is in get_category_regex)
+                    category_filter_regex = re.compile(effective_category_regex, re.IGNORECASE)
                     data_to_filter = [
                         (name, path, is_dir) for name, path, is_dir in data_to_filter
                         if category_filter_regex.search(os.path.join(path, name))
@@ -1163,25 +1188,22 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # 3. Apply text filtering (on the results already filtered by category)
         filtered_results = []
-        if filter_text:
-            # NEW LOGIC: Tokenize the filter text and require ALL tokens to be present
-            # The search is always case-insensitive for simplicity in the real-time filter
-            filter_tokens = [token.lower() for token in filter_text.split() if token]
+        if filter_keywords_list:
+            # Multi-keyword matching logic (Case-insensitive)
 
-            if filter_tokens:
-                # The internal list is (name, path, is_dir)
-                for name, path, is_dir in data_to_filter:
-                    full_path_lower = os.path.join(path, name).lower()
+            # Convert keywords to lowercase for case-insensitive matching
+            filter_tokens = [token.lower() for token in filter_keywords_list]
 
-                    # Check if ALL tokens are present in the full path
-                    # all() returns True if all elements of the iterable are True
-                    if all(token in full_path_lower for token in filter_tokens):
-                        filtered_results.append((name, path, is_dir))
-            else:
-                # If filter_text was non-empty but produced no tokens (e.g., only spaces)
-                filtered_results = data_to_filter
+            # The internal list is (name, path, is_dir)
+            for name, path, is_dir in data_to_filter:
+                # Convert the full path to lowercase once for comparison
+                full_path_lower = os.path.join(path, name).lower()
+
+                # Check if ALL tokens are present in the full path (case-insensitive search)
+                if all(token in full_path_lower for token in filter_tokens):
+                    filtered_results.append((name, path, is_dir))
         else:
-            # If there is no filter text, the filtered results are those filtered by category
+            # If there are no filter tokens, the filtered results are those filtered by category
             filtered_results = data_to_filter
 
         # 4. Update model with filtered results
@@ -1202,7 +1224,8 @@ Keywords are space-separated. Regex must be the final term.""")
             self._apply_responsive_column_sizing()
             if self.current_sort_column != -1:
                 self.model.sort(self.current_sort_column, self.current_sort_order)
-                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column, self.current_sort_order)
+                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column,
+                                                                      self.current_sort_order)
             else:
                 self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
 
