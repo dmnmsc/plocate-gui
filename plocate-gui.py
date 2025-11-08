@@ -7,9 +7,7 @@ import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
-    QMenu, QProgressBar,
-    QComboBox,
-    QDialog, QDialogButtonBox, QGroupBox
+    QMenu, QProgressBar, QComboBox, QDialog, QDialogButtonBox, QGroupBox
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
@@ -534,7 +532,11 @@ class PlocateGUI(QWidget):
 
         # Search input with icon and CLEAR BUTTON
         self.search_input = QLineEdit()
+        # MODIFICATION: Add ToolTip to reflect integrated filtering
         self.search_input.setPlaceholderText(_("Enter search term..."))
+        self.search_input.setToolTip(
+            _("Enter search term. You can add space-separated keywords or a final regex (e.g., .pdf$) for advanced filtering.")
+        )
         search_icon = QIcon.fromTheme("edit-find")
         search_action = QAction(search_icon, "", self.search_input)
         # Ensure compatibility with PyQt6 ActionPosition enumeration
@@ -586,16 +588,17 @@ class PlocateGUI(QWidget):
 
         main_layout.addLayout(search_options_layout)
 
-        # Filter input (regex) with icon and CLEAR BUTTON
-        self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText(_("Optional filter (space-separated keywords or regex)"))
-        filter_icon = QIcon.fromTheme("view-list-details")
-        filter_action = QAction(filter_icon, "", self.filter_input)
-        # Ensure compatibility with PyQt6 ActionPosition enumeration
-        self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
-        self.filter_input.returnPressed.connect(self.run_search)
-        self.filter_input.setClearButtonEnabled(True)
-        main_layout.addWidget(self.filter_input)
+        # REMOVED: The filter_input section is now removed as per the integration
+        # # Filter input (regex) with icon and CLEAR BUTTON
+        # self.filter_input = QLineEdit()
+        # self.filter_input.setPlaceholderText(_("Optional filter (space-separated keywords or regex)"))
+        # filter_icon = QIcon.fromTheme("view-list-details")
+        # filter_action = QAction(filter_icon, "", self.filter_input)
+        # self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
+        # self.filter_input.returnPressed.connect(self.run_search)
+        # self.filter_input.setClearButtonEnabled(True)
+        # main_layout.addWidget(self.filter_input)
+        # NOTE: filter_input is now removed
 
         # Results table setup
         self.model = PlocateResultsModel()
@@ -902,28 +905,32 @@ class PlocateGUI(QWidget):
         self._apply_responsive_column_sizing()
 
     def run_search(self):
-        term = self.search_input.text().strip()
-        raw_filter_pattern = self.filter_input.text().strip()
-        final_filter_pattern = ""
+        # MODIFICATION: Get the full query from the main search bar
+        full_query = self.search_input.text().strip()
 
-        # New default status is the DB update dates
+        # Split the query into keywords (tokens)
+        keywords = [k for k in full_query.split() if k]
+
         DEFAULT_STATUS_TEXT = self.get_db_mod_date_status()
 
-        if not term:
+        if not keywords:
             self.model.set_data([])
             self.update_status_display(DEFAULT_STATUS_TEXT)  # Use DB dates
             return
 
-        # 1. Build the base plocate command
-        plocate_command = ["plocate", term]
+        # 1. Determine the main plocate term and post-plocate filter terms
+        plocate_term = keywords[0]
+        post_plocate_filters = keywords[1:]
 
-        # 2. Add case-insensitivity option
+        # 2. Build and run the base plocate command
+        plocate_command = ["plocate", plocate_term]
+
+        # Add case-insensitivity option
         if self.case_insensitive_search:
             plocate_command.insert(1, "-i")
 
-        # 3. Multiple database option (if the media database exists)
+        # Multiple database option
         if os.path.exists(MEDIA_DB_PATH):
-            # Format: -d /path/to/db1:/path/to/db2
             db_list = f"{DEFAULT_DB_PATH}:{MEDIA_DB_PATH}"
             plocate_command.extend(["-d", db_list])
 
@@ -940,7 +947,7 @@ class PlocateGUI(QWidget):
                 QMessageBox.warning(self, _("Error"), _("Error executing plocate:\n") + str(e))
                 return
 
-        # --- Category Filtering Logic (Applied before regex filter) ---
+        # --- Category Filtering Logic (Applied before post-plocate filter) ---
         category_regex = self.current_category_regex
 
         if category_regex is not None:
@@ -950,7 +957,6 @@ class PlocateGUI(QWidget):
             else:
                 # Filter 1: Apply category regex filter (case-insensitive on the file path end)
                 try:
-                    # re.IGNORECASE is used because the plocate output paths may contain mixed case extensions.
                     category_filter_regex = re.compile(category_regex, re.IGNORECASE)
                     # Use re.search on the full path for the extension match
                     files = [f for f in files if category_filter_regex.search(f)]
@@ -959,28 +965,28 @@ class PlocateGUI(QWidget):
                     return
         # --- End Category Filtering Logic ---
 
-        # --- Multi-Keyword/Regex Filtering Logic (Existing, Applied after category filter) ---
-        if raw_filter_pattern:
-            # Split by space, filter out empty strings (multiple spaces)
-            keywords = [k for k in raw_filter_pattern.split() if k]
-
-            if len(keywords) > 1:
-                # If multiple space-separated keywords are found, build an AND regex
-                # using lookahead assertions: (?=.*keyword1)(?=.*keyword2).*
-                escaped_keywords = [re.escape(k) for k in keywords]
+        # --- Post-Plocate Multi-Keyword/Regex Filtering Logic (Using remaining keywords) ---
+        if post_plocate_filters:
+            # If multiple space-separated keywords remain, build an AND regex
+            if len(post_plocate_filters) > 1:
+                # Build AND regex using lookahead assertions: (?=.*keyword1)(?=.*keyword2).*
+                escaped_keywords = [re.escape(k) for k in post_plocate_filters]
                 lookahead_assertions = "".join(f"(?=.*{k})" for k in escaped_keywords)
                 final_filter_pattern = f"^{lookahead_assertions}.*$"
             else:
-                # If it's a single word or a complex pattern without spaces, use the input directly
-                final_filter_pattern = raw_filter_pattern
+                # If it's a single remaining token, use it as a simple substring/regex search
+                final_filter_pattern = post_plocate_filters[0]
 
             # Now apply the constructed (or direct) regex filter
             try:
-                # Sticking to simple regex matching on output lines.
-                regex = re.compile(final_filter_pattern)
+                # Case insensitivity is already handled by plocate -i, but we apply regex
+                # case-insensitivity here for robustness, especially if the user mixed cases
+                # in the post-filter.
+                regex = re.compile(final_filter_pattern, re.IGNORECASE if self.case_insensitive_search else 0)
                 files = [f for f in files if regex.search(f)]
             except re.error:
-                QMessageBox.warning(self, _("Error"), _("Filter contains an invalid regex pattern, or multi-keyword conversion failed."))
+                QMessageBox.warning(self, _("Error"),
+                                    _("Filter contains an invalid regex pattern, or multi-keyword conversion failed."))
                 return
 
         display_rows = []
@@ -996,6 +1002,7 @@ class PlocateGUI(QWidget):
                 name = os.path.sep
                 parent = ""
             else:
+                # Need to handle the path properly to get name and parent
                 temp_path = filepath.rstrip(os.path.sep)
                 parent, name = os.path.split(temp_path)
 
@@ -1169,7 +1176,8 @@ class PlocateGUI(QWidget):
         action_open_path.triggered.connect(self.open_path)
 
         # 3. Open in Terminal
-        action_open_terminal = menu.addAction(QIcon.fromTheme("utilities-terminal"), _("Open Path in Terminal (Ctrl+Shift+T"))
+        action_open_terminal = menu.addAction(QIcon.fromTheme("utilities-terminal"),
+                                              _("Open Path in Terminal (Ctrl+Shift+T"))
         action_open_terminal.triggered.connect(self.open_in_terminal)
 
         menu.addSeparator()
@@ -1253,7 +1261,7 @@ class PlocateGUI(QWidget):
         # Disable/Enable all relevant input/action widgets
         is_disabled = is_updating
         self.search_input.setDisabled(is_disabled)
-        self.filter_input.setDisabled(is_disabled)
+        # self.filter_input.setDisabled(is_disabled) # Removed
         self.category_combobox.setDisabled(is_disabled)
         self.case_insensitive_btn.setDisabled(is_disabled)
         self.unified_update_btn.setDisabled(is_disabled)
@@ -1288,7 +1296,8 @@ class PlocateGUI(QWidget):
             db_type = self.update_worker.db_type
             self.update_status_display(
                 # Use the fetched type in the status message
-                _("Starting {db_type} database update... Please enter your password if prompted.").format(db_type=db_type)
+                _("Starting {db_type} database update... Please enter your password if prompted.").format(
+                    db_type=db_type)
             )
         else:
             # Fallback message
@@ -1391,7 +1400,8 @@ class PlocateGUI(QWidget):
 
         if not index_paths:
             # Should not happen if dialog default is used, but safe guard.
-            QMessageBox.warning(self, _("Error"), _("No paths specified for media indexing. The media database update was skipped."))
+            QMessageBox.warning(self, _("Error"),
+                                _("No paths specified for media indexing. The media database update was skipped."))
             return
 
         update_command.append("-U")
