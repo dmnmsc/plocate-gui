@@ -162,7 +162,7 @@ def human_readable_size(size, decimal_places=2):
 def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     """Returns a QIcon based on the file extension or if it is a directory."""
 
-    if not filepath or filepath == _("No results found") or filepath == _("Search failed"):
+    if not filepath or filepath == _("No results found") or filepath == _("Search failed") or filepath == _("No results match filter"):
         return QIcon.fromTheme("dialog-warning")
 
     # 1. Directory Icon
@@ -678,6 +678,9 @@ class PlocateGUI(QWidget):
         # --- Internal State for Preferences and Toggles ---
         self.case_insensitive_search = False
         self.current_category_regex = None  # Stores the current regex filter for category
+        # NEW: Store raw results from plocate for in-memory filtering
+        # Format: (name, path, is_dir)
+        self._raw_plocate_results: list[tuple] = []
         # --- End Internal State ---
 
         # Initialize ThreadPool for non-blocking operations
@@ -706,7 +709,7 @@ class PlocateGUI(QWidget):
 
         main_layout = QVBoxLayout()
 
-        # Input and Options container
+        # Input and Options container (Row 1: Main Search, Category, Case, Update)
         search_options_layout = QHBoxLayout()
 
         # Search input with icon and CLEAR BUTTON
@@ -774,6 +777,25 @@ Keywords are space-separated. Regex must be the final term.""")
         search_options_layout.addWidget(self.unified_update_btn)
 
         main_layout.addLayout(search_options_layout)
+
+        # --- NEW: In-Memory Filter Bar (Row 2: Filter) ---
+        filter_layout = QHBoxLayout()
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText(_("Filter current results (in-memory)..."))
+        self.filter_input.setToolTip(
+            _("Filters the visible results list in real-time. This does NOT re-run the plocate search.")
+        )
+        filter_icon = QIcon.fromTheme("view-filter")
+        filter_action = QAction(filter_icon, "", self.filter_input)
+        self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
+        self.filter_input.setClearButtonEnabled(True)
+
+        # Connect the text change signal to the new in-memory filter method
+        self.filter_input.textChanged.connect(self.run_in_memory_filter)
+
+        filter_layout.addWidget(self.filter_input)
+        main_layout.addLayout(filter_layout)
+        # --- END NEW FILTER BAR ---
 
         # Results table setup
         self.model = PlocateResultsModel()
@@ -1079,9 +1101,70 @@ Keywords are space-separated. Regex must be the final term.""")
         # Re-apply the size constraints when the window size changes
         self._apply_responsive_column_sizing()
 
+    # --- NEW: In-Memory Filter Logic ---
+    def run_in_memory_filter(self):
+        """
+        Filters the raw plocate results based on the text in the filter_input
+        and updates the table model. Does NOT rerun plocate.
+        """
+        filter_text = self.filter_input.text().strip()
+
+        # 1. If no search has been run, or if the filter is empty, display all raw results
+        if not self._raw_plocate_results or not filter_text:
+            if not self._raw_plocate_results:
+                self.model.set_data([])
+                self.update_status_display(self.get_db_mod_date_status())
+            else:
+                self.model.set_data(self._raw_plocate_results)
+                # Recalculate result count message
+                status_message = _("Found {} results").format(len(self._raw_plocate_results))
+                self.update_status_display(status_message)
+
+            # Restore sorting and sizing
+            self._apply_responsive_column_sizing()
+            if self.current_sort_column != -1:
+                self.model.sort(self.current_sort_column, self.current_sort_order)
+                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column, self.current_sort_order)
+            else:
+                self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+            return
+
+        # 2. Apply filtering
+        # Filter is always case-insensitive for in-memory filtering for better usability
+        filtered_results = []
+        filter_text_lower = filter_text.lower()
+
+        # The internal list is (name, path, is_dir)
+        for name, path, is_dir in self._raw_plocate_results:
+            # Check if filter_text is in the file name OR the full path
+            full_path = os.path.join(path, name)
+            if filter_text_lower in name.lower() or filter_text_lower in full_path.lower():
+                filtered_results.append((name, path, is_dir))
+
+        # 3. Update model with filtered results
+        if not filtered_results:
+            self.model.set_data([(_("No results match filter"), "", False)])
+            self.update_status_display(_("No results match filter"))
+        else:
+            self.model.set_data(filtered_results)
+            # Update status bar with filtered count
+            status_message = _("Found {} results (filtered from {})").format(
+                len(filtered_results), len(self._raw_plocate_results)
+            )
+            self.update_status_display(status_message)
+
+            # Restore sorting and sizing
+            self._apply_responsive_column_sizing()
+            if self.current_sort_column != -1:
+                self.model.sort(self.current_sort_column, self.current_sort_order)
+                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column, self.current_sort_order)
+            else:
+                self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+
     # --- NEW: Non-Blocking Search Runner (Replaces the original blocking logic) ---
     def set_ui_searching_state(self, is_searching: bool):
         """Sets the state of buttons and inputs during search, managing the progress indicator."""
+
         # Only set if a DB update is NOT in progress
         if self.update_worker is not None:
             return
@@ -1093,6 +1176,7 @@ Keywords are space-separated. Regex must be the final term.""")
         self.search_input.setDisabled(is_disabled)
         self.category_combobox.setDisabled(is_disabled)
         self.case_insensitive_btn.setDisabled(is_disabled)
+        self.filter_input.setDisabled(is_disabled)  # NEW: Disable in-memory filter during plocate search
 
         if is_searching:
             # Show search progress
@@ -1133,31 +1217,24 @@ Keywords are space-separated. Regex must be the final term.""")
 
         if not success:
             QMessageBox.warning(self, _("Search Error"), message)
+            self._raw_plocate_results = []
             self.model.set_data([(_("Search failed"), "", False)])
             self.update_status_display(_("Search failed: ") + message)
             return
 
-        # --- Result Counting Logic ---
-        result_count = len(display_rows)
-        status_message = _("Found {} results").format(result_count)
+        # 1. Store the successful (but pre-in-memory-filtered) results
+        self._raw_plocate_results = display_rows
 
-        # Populate the table
+        # 2. Run the in-memory filter to populate the visible table
+        self.run_in_memory_filter()
+
+        # Note: Status bar update, sorting, and sizing are now handled inside run_in_memory_filter()
+        # because the filter might reduce the displayed count immediately.
         if not display_rows:
             self.model.set_data([(_("No results found"), "", False)])
             self.update_status_display(_("No results found"))
         else:
             self.model.set_data(display_rows)
-            self.update_status_display(status_message)
-
-            # Restore sorting if the table was sorted
-            if self.current_sort_column != -1:
-                self.model.sort(self.current_sort_column, self.current_sort_order)
-                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column, self.current_sort_order)
-            else:
-                self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
-
-            # Apply the responsive sizing (initial adjustment)
-            self._apply_responsive_column_sizing()
 
     def run_search(self):
         """
@@ -1178,6 +1255,7 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # Exit if there are no keywords AND no category shortcut
         if not keywords and not category_shortcut_name:
+            self._raw_plocate_results = []
             self.model.set_data([])
             self.update_status_display(self.get_db_mod_date_status())
             return
@@ -1234,7 +1312,8 @@ Keywords are space-separated. Regex must be the final term.""")
         except IndexError:
             return None, None, False
 
-        if name == _("No results found"):
+        # Handle the placeholder text case
+        if name == _("No results found") or name == _("Search failed") or name == _("No results match filter"):
             return None, None, False
 
         return name, path, is_dir
@@ -1434,7 +1513,9 @@ Keywords are space-separated. Regex must be the final term.""")
             # 2. Clear results and reset search state if results are present
             if len(self.model._data) > 0:
                 self.model.set_data([])
+                self._raw_plocate_results = []  # Clear raw results as well
                 self.search_input.clear()
+                self.filter_input.clear()  # NEW: Clear filter input
                 self.category_combobox.setCurrentIndex(0)
                 self.update_status_display(self.get_db_mod_date_status())
                 self.search_input.setFocus()
@@ -1458,7 +1539,7 @@ Keywords are space-separated. Regex must be the final term.""")
         # Disable/Enable all relevant input/action widgets
         is_disabled = is_updating
         self.search_input.setDisabled(is_disabled)
-        # self.filter_input.setDisabled(is_disabled) # Removed
+        self.filter_input.setDisabled(is_disabled)  # NEW: Disable in-memory filter
         self.category_combobox.setDisabled(is_disabled)
         self.case_insensitive_btn.setDisabled(is_disabled)
         self.unified_update_btn.setDisabled(is_disabled)
