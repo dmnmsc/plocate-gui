@@ -1276,6 +1276,9 @@ Keywords are space-separated. Regex must be the final term.""")
         Parses the query and launches the non-blocking SearchWorker.
         Replaces the original blocking run_search method logic.
         """
+        # Clear current selection to prevent 'Enter' from opening the previously selected file
+        self.result_table.selectionModel().clearSelection()
+
         full_query = self.search_input.text().strip()
 
         # Check if a search is already running
