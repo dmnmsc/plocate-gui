@@ -1161,15 +1161,25 @@ Keywords are space-separated. Regex must be the final term.""")
                     # If the regex is invalid, the category filter is ignored
                     pass
 
-                    # 3. Apply text filtering (on the results already filtered by category)
+        # 3. Apply text filtering (on the results already filtered by category)
         filtered_results = []
         if filter_text:
-            filter_text_lower = filter_text.lower()
-            # The internal list is (name, path, is_dir)
-            for name, path, is_dir in data_to_filter:
-                full_path = os.path.join(path, name)
-                if filter_text_lower in name.lower() or filter_text_lower in full_path.lower():
-                    filtered_results.append((name, path, is_dir))
+            # NEW LOGIC: Tokenize the filter text and require ALL tokens to be present
+            # The search is always case-insensitive for simplicity in the real-time filter
+            filter_tokens = [token.lower() for token in filter_text.split() if token]
+
+            if filter_tokens:
+                # The internal list is (name, path, is_dir)
+                for name, path, is_dir in data_to_filter:
+                    full_path_lower = os.path.join(path, name).lower()
+
+                    # Check if ALL tokens are present in the full path
+                    # all() returns True if all elements of the iterable are True
+                    if all(token in full_path_lower for token in filter_tokens):
+                        filtered_results.append((name, path, is_dir))
+            else:
+                # If filter_text was non-empty but produced no tokens (e.g., only spaces)
+                filtered_results = data_to_filter
         else:
             # If there is no filter text, the filtered results are those filtered by category
             filtered_results = data_to_filter
