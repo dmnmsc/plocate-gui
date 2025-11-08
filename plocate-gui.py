@@ -159,8 +159,8 @@ def human_readable_size(size, decimal_places=2):
 def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     """Returns a QIcon based on the file extension or if it is a directory."""
 
-    if not filepath or filepath == _("No results found"):
-        return QIcon.fromTheme("text-x-generic")
+    if not filepath or filepath == _("No results found") or filepath == _("Search failed"):
+        return QIcon.fromTheme("dialog-warning")
 
     # 1. Directory Icon
     basename = os.path.basename(filepath)
@@ -317,6 +317,127 @@ class UpdateDBWorker(QRunnable):
             except OSError:
                 # Catches "No such process" errors if the process terminated just now
                 pass
+
+
+# --- NEW: Search Worker and Signals (for non-blocking search) ---
+class SearchSignals(QObject):
+    """Defines signals for the SearchWorker."""
+    # Signal (list of result tuples, success message/error)
+    finished = pyqtSignal(list, str, bool)
+
+
+class SearchWorker(QRunnable):
+    """Runnable that performs the plocate search and filtering in a separate thread."""
+
+    def __init__(self, plocate_term, post_plocate_filters, category_regex, case_insensitive):
+        super().__init__()
+        self.plocate_term = plocate_term
+        self.post_plocate_filters = post_plocate_filters
+        self.category_regex = category_regex
+        self.case_insensitive = case_insensitive
+        self.signals = SearchSignals()
+        self._is_canceled = False # Internal cancellation flag
+
+    def cancel(self):
+        """Sets the internal cancellation flag."""
+        self._is_canceled = True
+
+    def run(self):
+        """The main search and filtering logic."""
+        try:
+            # 1. Build and run the base plocate command
+            plocate_command = ["plocate", self.plocate_term]
+
+            if self.case_insensitive:
+                plocate_command.insert(1, "-i")
+
+            if os.path.exists(MEDIA_DB_PATH):
+                db_list = f"{DEFAULT_DB_PATH}:{MEDIA_DB_PATH}"
+                plocate_command.extend(["-d", db_list])
+
+            # Execute plocate (this is the potentially long-running blocking call)
+            result = subprocess.run(
+                plocate_command, text=True, capture_output=True, check=False, timeout=120 # Added timeout
+            )
+
+            # Check for cancellation *after* plocate finishes
+            if self._is_canceled:
+                self.signals.finished.emit([], _("Search cancelled."), False)
+                return
+
+            files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+            if result.returncode != 0 and not files:
+                 # Check if the error is just a "not found" which is common/normal
+                if result.returncode == 1 and not result.stdout and not result.stderr:
+                    files = [] # Treat as zero results
+                else:
+                    error_message = result.stderr or result.stdout or _("Unknown plocate error.")
+                    self.signals.finished.emit([], _("Error executing plocate:\n") + error_message, False)
+                    return
+
+            # 2. Category Filtering Logic
+            if self.category_regex is not None:
+                if self.category_regex == "DIR_ONLY":
+                    files = [f for f in files if f.endswith(os.path.sep)]
+                else:
+                    category_filter_regex = re.compile(self.category_regex, re.IGNORECASE)
+                    files = [f for f in files if category_filter_regex.search(f)]
+
+            # Check for cancellation
+            if self._is_canceled:
+                self.signals.finished.emit([], _("Search cancelled."), False)
+                return
+
+            # 3. Post-Plocate Multi-Keyword/Regex Filtering Logic
+            if self.post_plocate_filters:
+                if len(self.post_plocate_filters) > 1:
+                    escaped_keywords = [re.escape(k) for k in self.post_plocate_filters]
+                    lookahead_assertions = "".join(f"(?=.*{k})" for k in escaped_keywords)
+                    final_filter_pattern = f"^{lookahead_assertions}.*$"
+                else:
+                    final_filter_pattern = self.post_plocate_filters[0]
+
+                regex = re.compile(final_filter_pattern, re.IGNORECASE if self.case_insensitive else 0)
+                files = [f for f in files if regex.search(f)]
+
+            # Check for cancellation
+            if self._is_canceled:
+                self.signals.finished.emit([], _("Search cancelled."), False)
+                return
+
+            # 4. Prepare display data
+            display_rows = []
+            for filepath in files:
+                filepath = filepath.strip()
+                if not filepath:
+                    continue
+
+                is_dir = filepath.endswith(os.path.sep)
+
+                if filepath == os.path.sep:
+                    name = os.path.sep
+                    parent = ""
+                else:
+                    temp_path = filepath.rstrip(os.path.sep)
+                    parent, name = os.path.split(temp_path)
+
+                if not parent:
+                    parent = os.path.sep
+
+                # Store (name, parent, is_dir)
+                display_rows.append((name, parent, is_dir))
+
+            # Success
+            self.signals.finished.emit(display_rows, _("Search completed."), True)
+
+        except subprocess.TimeoutExpired:
+            self.signals.finished.emit([], _("Plocate command timed out (120 seconds)."), False)
+        except re.error as e:
+            self.signals.finished.emit([], _("Regex filter contains an invalid pattern: ") + str(e), False)
+        except Exception as e:
+            self.signals.finished.emit([], _("An unexpected search error occurred: ") + str(e), False)
+# --- END NEW SEARCH WORKER ---
 
 
 # Model implementation for QTableView
@@ -562,6 +683,8 @@ class PlocateGUI(QWidget):
         self.current_stat_path = None
         # Reference to the update worker for cancellation
         self.update_worker = None
+        # Reference to the search worker for cancellation
+        self.search_worker = None # NEW: Reference for search worker
 
         # Try to load the application icon from the system theme
         icon = QIcon.fromTheme("plocate-gui")
@@ -594,6 +717,7 @@ class PlocateGUI(QWidget):
         search_action = QAction(search_icon, "", self.search_input)
         # Ensure compatibility with PyQt6 ActionPosition enumeration
         self.search_input.addAction(search_action, QLineEdit.ActionPosition.LeadingPosition)
+        # Connect to a dedicated search handler that starts the worker
         self.search_input.returnPressed.connect(self.run_search)
         self.search_input.setClearButtonEnabled(True)
         search_options_layout.addWidget(self.search_input)
@@ -641,18 +765,6 @@ class PlocateGUI(QWidget):
 
         main_layout.addLayout(search_options_layout)
 
-        # REMOVED: The filter_input section is now removed as per the integration
-        # # Filter input (regex) with icon and CLEAR BUTTON
-        # self.filter_input = QLineEdit()
-        # self.filter_input.setPlaceholderText(_("Optional filter (space-separated keywords or regex)"))
-        # filter_icon = QIcon.fromTheme("view-list-details")
-        # filter_action = QAction(filter_icon, "", self.filter_input)
-        # self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
-        # self.filter_input.returnPressed.connect(self.run_search)
-        # self.filter_input.setClearButtonEnabled(True)
-        # main_layout.addWidget(self.filter_input)
-        # NOTE: filter_input is now removed
-
         # Results table setup
         self.model = PlocateResultsModel()
         self.result_table = QTableView()
@@ -681,7 +793,6 @@ class PlocateGUI(QWidget):
 
         main_layout.addWidget(self.result_table)
 
-        # Instructions/info label -> Replaced by dynamic status label
         # Get the database modification status to display as the default text
         initial_status_text = self.get_db_mod_date_status()
         self.status_label = QLabel(initial_status_text)
@@ -709,11 +820,12 @@ class PlocateGUI(QWidget):
         status_bar_layout.addWidget(self.progress_bar)
 
         # 3. NEW: Cancel Button for DB update
-        self.cancel_update_btn = QPushButton(_("Cancel"))
+        self.cancel_update_btn = QPushButton(_("Cancel Update")) # Modified text
         self.cancel_update_btn.setIcon(QIcon.fromTheme("dialog-cancel"))
-        self.cancel_update_btn.setMaximumWidth(100)
+        self.cancel_update_btn.setMaximumWidth(150) # Increased width
         self.cancel_update_btn.hide()  # Initially hidden
-        self.cancel_update_btn.clicked.connect(self.cancel_db_update)
+        # Connect the cancel button to a single unified handler
+        self.cancel_update_btn.clicked.connect(self.cancel_background_task)
         status_bar_layout.addWidget(self.cancel_update_btn)
 
         # Add the horizontal layout to the main vertical layout
@@ -800,7 +912,7 @@ class PlocateGUI(QWidget):
         # Update dynamic text
         self.update_case_insensitive_text()
 
-        # Rerun search immediately if there is a term
+        # Rerun search immediately if there is a term (via the non-blocking runner)
         if self.search_input.text().strip():
             self.run_search()
 
@@ -811,7 +923,7 @@ class PlocateGUI(QWidget):
         selected_category_display_name = self.category_combobox.currentText()
         self.current_category_regex = get_category_regex(selected_category_display_name)
 
-        # Rerun search immediately if there is a term
+        # Rerun search immediately if there is a term (via the non-blocking runner)
         if self.search_input.text().strip():
             self.run_search()
 
@@ -957,145 +1069,74 @@ class PlocateGUI(QWidget):
         # Re-apply the size constraints when the window size changes
         self._apply_responsive_column_sizing()
 
-    def run_search(self):
-        full_query = self.search_input.text().strip()
-
-        # Split the query into keywords, supporting quotes, and extract the category shortcut
-        keywords, category_shortcut_name = tokenize_search_query(full_query)
-
-        DEFAULT_STATUS_TEXT = self.get_db_mod_date_status()
-
-        # Exit if there are no keywords AND no category shortcut
-        if not keywords and not category_shortcut_name:
-            self.model.set_data([])
-            self.update_status_display(DEFAULT_STATUS_TEXT)
+    # --- NEW: Non-Blocking Search Runner (Replaces the original blocking logic) ---
+    def set_ui_searching_state(self, is_searching: bool):
+        """Sets the state of buttons and inputs during search, managing the progress indicator."""
+        # Only set if a DB update is NOT in progress
+        if self.update_worker is not None:
             return
 
-        # --- Apply Category Shortcut from Search Bar ---
-        # This block only updates the ComboBox state, which in turn sets self.current_category_regex.
-        if category_shortcut_name:
-            # Find the index of the category name (translatable) and set the ComboBox
-            index = self.category_combobox.findText(category_shortcut_name)
-            if index != -1:
-                self.category_combobox.setCurrentIndex(index)
-        # --- End Apply Category Shortcut from Search Bar ---
+        is_disabled = is_searching
+        self.unified_update_btn.setDisabled(is_disabled) # Disable update button
 
-        # 1. Determine the main plocate term and post-plocate filter terms
-        # This block MUST run whether or not a shortcut was used (LÍNEAS CORREGIDAS)
-        if keywords:
-            # Normal case: Use the first token as the plocate search term
-            plocate_term = keywords[0]
-            post_plocate_filters = keywords[1:]
+        # Set search-specific controls based on search state
+        self.search_input.setDisabled(is_disabled)
+        self.category_combobox.setDisabled(is_disabled)
+        self.case_insensitive_btn.setDisabled(is_disabled)
+
+        if is_searching:
+            # Show search progress
+            self.progress_bar.setFormat(_("Searching..."))
+            self.progress_bar.show()
+            self.cancel_update_btn.setText(_("Cancel Search")) # Updated text for context
+            self.cancel_update_btn.show()
+
+            # Clear existing metadata/result count message
+            self.update_status_display(_("Executing search... Please wait."))
         else:
-            # Case where only a category shortcut was provided (e.g., "::doc").
-            # Use a universal search term (like '.') to retrieve all possible entries.
-            plocate_term = "."
-            post_plocate_filters = []
+            # Hide search progress
+            self.progress_bar.hide()
+            self.cancel_update_btn.hide()
+            self.cancel_update_btn.setText(_("Cancel Update")) # Restore default text
 
-        # 2. Build and run the base plocate command (LÍNEA CORREGIDA)
-        plocate_command = ["plocate", plocate_term]
+            # The status will be updated by the search_finished slot
 
-        # Add case-insensitivity option
-        if self.case_insensitive_search:
-            plocate_command.insert(1, "-i")
+    def cancel_background_task(self):
+        """Called when the user clicks the 'Cancel' button."""
+        if self.update_worker:
+            self.update_worker.cancel()
+            self.update_status_display(_("Attempting to cancel database update..."))
+        elif self.search_worker:
+            self.search_worker.cancel()
+            self.update_status_display(_("Attempting to cancel search..."))
 
-        # Multiple database option
-        if os.path.exists(MEDIA_DB_PATH):
-            db_list = f"{DEFAULT_DB_PATH}:{MEDIA_DB_PATH}"
-            plocate_command.extend(["-d", db_list])
+    def search_finished(self, display_rows: list, message: str, success: bool):
+        """
+        Slot to receive data from the SearchWorker. Updates the model and UI.
+        Runs on the main GUI thread.
+        """
+        # Release worker reference
+        self.search_worker = None
 
-        try:
-            # Run plocate and get output
-            result = subprocess.run(
-                plocate_command, text=True, capture_output=True, check=False
-            )
-            files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        except subprocess.CalledProcessError as e:
-            if e.returncode == 1 and not e.stdout:
-                files = []
-            else:
-                QMessageBox.warning(self, _("Error"), _("Error executing plocate:\n") + str(e))
-                return
+        # Restore UI state (must be called even if search failed)
+        self.set_ui_searching_state(False)
 
-        # --- Category Filtering Logic (Applied before post-plocate filter) ---
-        category_regex = self.current_category_regex
+        if not success:
+            QMessageBox.warning(self, _("Search Error"), message)
+            self.model.set_data([(_("Search failed"), "", False)])
+            self.update_status_display(_("Search failed: ") + message)
+            return
 
-        if category_regex is not None:
-            if category_regex == "DIR_ONLY":
-                # Filter 1: Directory only (paths ending with os.path.sep)
-                files = [f for f in files if f.endswith(os.path.sep)]
-            else:
-                # Filter 1: Apply category regex filter (case-insensitive on the file path end)
-                try:
-                    category_filter_regex = re.compile(category_regex, re.IGNORECASE)
-                    # Use re.search on the full path for the extension match
-                    files = [f for f in files if category_filter_regex.search(f)]
-                except re.error:
-                    QMessageBox.warning(self, _("Error"), _("Category filter contains an invalid regex pattern."))
-                    return
-        # --- End Category Filtering Logic ---
-
-        # --- Post-Plocate Multi-Keyword/Regex Filtering Logic (Using remaining keywords) ---
-        if post_plocate_filters:
-            # If multiple space-separated keywords remain, build an AND regex
-            if len(post_plocate_filters) > 1:
-                # Build AND regex using lookahead assertions: (?=.*keyword1)(?=.*keyword2).*
-                escaped_keywords = [re.escape(k) for k in post_plocate_filters]
-                lookahead_assertions = "".join(f"(?=.*{k})" for k in escaped_keywords)
-                final_filter_pattern = f"^{lookahead_assertions}.*$"
-            else:
-                # If it's a single remaining token, use it as a simple substring/regex search
-                final_filter_pattern = post_plocate_filters[0]
-
-            # Now apply the constructed (or direct) regex filter
-            try:
-                # Case insensitivity is already handled by plocate -i, but we apply regex
-                # case-insensitivity here for robustness, especially if the user mixed cases
-                # in the post-filter.
-                regex = re.compile(final_filter_pattern, re.IGNORECASE if self.case_insensitive_search else 0)
-                files = [f for f in files if regex.search(f)]
-            except re.error:
-                QMessageBox.warning(self, _("Error"),
-                                    _("Filter contains an invalid regex pattern, or multi-keyword conversion failed."))
-                return
-
-        display_rows = []
-        for filepath in files:
-            filepath = filepath.strip()
-            if not filepath:
-                continue
-
-            # Heuristics: Assume directory if the path ends with a separator (as returned by plocate).
-            is_dir = filepath.endswith(os.path.sep)
-
-            if filepath == os.path.sep:
-                name = os.path.sep
-                parent = ""
-            else:
-                # Need to handle the path properly to get name and parent
-                temp_path = filepath.rstrip(os.path.sep)
-                parent, name = os.path.split(temp_path)
-
-            if not parent:
-                parent = os.path.sep
-
-            # Store (name, parent, is_dir)
-            display_rows.append((name, parent, is_dir))
-
-        # --- Result Counting Logic (NEW) ---
+        # --- Result Counting Logic ---
         result_count = len(display_rows)
-        # Use the Qt translation function for status message
         status_message = _("Found {} results").format(result_count)
 
         # Populate the table
         if not display_rows:
-            # Note: Must pass 3 elements (name, path, is_dir) even for the info row
             self.model.set_data([(_("No results found"), "", False)])
-            # Update the status to indicate no results.
             self.update_status_display(_("No results found"))
         else:
             self.model.set_data(display_rows)
-            # Update the status with the result count.
             self.update_status_display(status_message)
 
             # Restore sorting if the table was sorted
@@ -1107,6 +1148,65 @@ class PlocateGUI(QWidget):
 
             # Apply the responsive sizing (initial adjustment)
             self._apply_responsive_column_sizing()
+
+
+    def run_search(self):
+        """
+        Parses the query and launches the non-blocking SearchWorker.
+        Replaces the original blocking run_search method logic.
+        """
+        full_query = self.search_input.text().strip()
+
+        # Check if a search is already running
+        if self.search_worker is not None:
+            # Cancel the old one before starting a new one (or just return for simplicity)
+            # For simplicity, we just return if a search is in progress
+            # self.search_worker.cancel() # Could implement this, but we'll stick to a simple block for now
+            return
+
+        # Split the query into keywords, supporting quotes, and extract the category shortcut
+        keywords, category_shortcut_name = tokenize_search_query(full_query)
+
+        # Exit if there are no keywords AND no category shortcut
+        if not keywords and not category_shortcut_name:
+            self.model.set_data([])
+            self.update_status_display(self.get_db_mod_date_status())
+            return
+
+        # 1. Apply Category Shortcut from Search Bar (Update ComboBox State)
+        if category_shortcut_name:
+            index = self.category_combobox.findText(category_shortcut_name)
+            if index != -1:
+                self.category_combobox.setCurrentIndex(index)
+
+        # 2. Determine the main plocate term and post-plocate filter terms
+        if keywords:
+            plocate_term = keywords[0]
+            post_plocate_filters = keywords[1:]
+        else:
+            plocate_term = "." # Universal term when only a category shortcut is used
+            post_plocate_filters = []
+
+        # The category regex comes from the current ComboBox state (set by category_changed or the shortcut block above)
+        category_regex = self.current_category_regex
+
+        # 3. Create and launch the worker
+        worker = SearchWorker(
+            plocate_term,
+            post_plocate_filters,
+            category_regex,
+            self.case_insensitive_search
+        )
+        self.search_worker = worker # Store reference for cancellation
+        worker.signals.finished.connect(self.search_finished)
+
+        # Set UI state to searching
+        self.set_ui_searching_state(True)
+
+        # Start execution in the thread pool
+        self.threadpool.start(worker)
+
+    # --- END NEW SEARCH RUNNER ---
 
     def get_selected_row_data(self):
         """Gets the Name, Path, and is_dir of the selected row via the model."""
@@ -1344,20 +1444,17 @@ class PlocateGUI(QWidget):
             # 2. Show the progress bar and cancel button
             self.progress_bar.setFormat(_("Updating database..."))
             self.progress_bar.show()
+            self.cancel_update_btn.setText(_("Cancel Update")) # Ensure correct text
             self.cancel_update_btn.show()  # <-- Show Cancel button
         else:
             # 1. Hide the progress bar and cancel button
             self.progress_bar.hide()
             self.cancel_update_btn.hide()  # <-- Hide Cancel button
+            self.cancel_update_btn.setText(_("Cancel Search")) # Restore search default text
 
             # 2. Restore the database update status text
             self.update_status_display(self.get_db_mod_date_status())
 
-    def cancel_db_update(self):
-        """Called when the user clicks the 'Cancel' button."""
-        if self.update_worker:
-            self.update_worker.cancel()
-            self.update_status_display(_("Attempting to cancel database update..."))
 
     def handle_db_update_start(self):
         """Called by a DB worker's signal when it starts. Updates the status message."""
@@ -1431,6 +1528,7 @@ class PlocateGUI(QWidget):
 
             # If search input is not empty, rerun search to reflect new DB state (optional but good UX)
             if self.search_input.text().strip():
+                # Rerun search using the non-blocking runner
                 self.run_search()
 
         worker.signals.finished.connect(on_finish)
