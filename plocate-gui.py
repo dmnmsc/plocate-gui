@@ -31,8 +31,10 @@ CATEGORY_SHORTCUTS = {
     "dir": _("Directories"),
     "doc": _("Documents"),
     "img": _("Images"),
+    "vid": _("Videos"),
     "video": _("Videos"),
     "audio": _("Audio"),
+    "app": _("Apps"),
     "code": _("Code"),
     "zip": _("Archives"),
 }
