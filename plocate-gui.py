@@ -37,6 +37,7 @@ CATEGORY_SHORTCUTS = {
     "app": _("Apps"),
     "code": _("Code"),
     "zip": _("Archives"),
+    "text": _("Generic Text"),
 }
 # Command prefix for category shortcut.
 SHORTCUT_PREFIX = "::"
