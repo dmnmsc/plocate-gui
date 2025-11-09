@@ -746,6 +746,8 @@ class PlocateGUI(QWidget):
         # NEW: Store raw results from plocate for in-memory filtering
         # Format: (name, path, is_dir)
         self._raw_plocate_results: list[tuple] = []
+        # NEW FIX: Store the exact search term used for the last successful plocate call.
+        self._last_plocate_term: str = ""
         # --- End Internal State ---
 
         # Initialize ThreadPool for non-blocking operations
@@ -1255,7 +1257,9 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # 1. Combine filter_input (extra user filters) and search_input (main query)
         filter_text = self.filter_input.text().strip()
-        main_search_text = self.search_input.text().strip()
+        # CRITICAL FIX: Use the term that was *actually* used to run plocate
+        # instead of the current text in the main search bar.
+        main_search_text = self._last_plocate_term
 
         # Merge both inputs without overwriting user content
         combined_parts = []
@@ -1466,6 +1470,9 @@ Keywords are space-separated. Regex must be the final term.""")
             self.model.set_data([])
             self.update_status_display(self.get_db_mod_date_status())
             return
+
+        # FIX: Store the successful search query for subsequent in-memory filtering
+        self._last_plocate_term = full_query
 
         # 1. Apply Category Shortcut from Search Bar (Update ComboBox State)
         if category_shortcut_name:
@@ -1743,6 +1750,7 @@ Keywords are space-separated. Regex must be the final term.""")
                 self._raw_plocate_results = []  # Clear raw results as well
                 self.search_input.clear()
                 self.filter_input.clear()  # NEW: Clear filter input
+                self._last_plocate_term = ""
                 self.category_combobox.setCurrentIndex(0)
                 self.update_status_display(self.get_db_mod_date_status())
                 self.search_input.setFocus()
