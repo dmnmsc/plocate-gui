@@ -1038,16 +1038,28 @@ Keywords are space-separated. Regex must be the final term.""")
         # 4. Only change state and update UI/search if necessary
         if desired_insensitive != self.case_insensitive_search:
 
-            # Change the state
+            # Update the internal state
             self.case_insensitive_search = desired_insensitive
-            self.case_insensitive_btn.setChecked(not self.case_insensitive_search)
 
-            # Update the UI button display
+            # [CRITICAL]: Block signals so setChecked() doesn't trigger toggle_case_insensitive()
+            self.case_insensitive_btn.blockSignals(True)
+            self.case_insensitive_btn.setChecked(not self.case_insensitive_search)
+            self.case_insensitive_btn.blockSignals(False)  # Re-enable signals
+
+            # Update the button label and tooltip
             self.update_case_insensitive_text()
 
-    def toggle_case_insensitive(self):
-        """Toggles the internal state, updates the style, and re-runs the search."""
+            # [NEW FLOW]: Apply the same logic used by the toggle button
+            if text:
+                if self._raw_plocate_results:
+                    # In-memory re-filtering now respects the updated sensitivity
+                    self.run_in_memory_filter(rerun_plocate=False)
 
+    def toggle_case_insensitive(self):
+        """
+        Toggles the case sensitivity mode and reapplies in-memory filtering
+        if results are already loaded, without re-running plocate.
+        """
         # The button's check state is already updated by the signal
         self.case_insensitive_search = not self.case_insensitive_btn.isChecked()
 
@@ -1057,8 +1069,12 @@ Keywords are space-separated. Regex must be the final term.""")
         # Update dynamic text
         self.update_case_insensitive_text()
 
-        # Rerun search immediately if there is a term (via the non-blocking runner)
-        if self.search_input.text().strip():
+        # If there are already loaded results, reapply the in-memory filter only
+        if self._raw_plocate_results:
+            self.run_in_memory_filter(rerun_plocate=False)
+
+        # Otherwise, if there is search text but no results yet, run a full search
+        elif self.search_input.text().strip():
             self.run_search()
 
     # Slot to handle category change
@@ -1226,16 +1242,32 @@ Keywords are space-separated. Regex must be the final term.""")
     # --- NEW: In-Memory Filter Logic (COMBINED WITH CATEGORY SHORTCUT AND MULTI-KEYWORD) ---
     def run_in_memory_filter(self, rerun_plocate=True):
         """
-        Filters the raw plocate results based on the text in the filter_input
-        and the current category_combobox selection, then updates the table model.
+        Filters the raw plocate results based on:
+          • The user's additional text in the in-memory filter bar.
+          • The main search bar text (used as an extra filter when present).
+          • The current selected category and case sensitivity setting.
+
+        This function never calls plocate unless explicitly allowed.
         """
-        full_filter_text = self.filter_input.text().strip()
 
         # 0. Determine the source of the data to filter
         data_to_filter = self._raw_plocate_results
 
-        # 1. Tokenize Search and Extract Category Shortcut (NEW LOGIC)
-        # Use the existing function to separate the category shortcut (if any) from the remaining keywords
+        # 1. Combine filter_input (extra user filters) and search_input (main query)
+        filter_text = self.filter_input.text().strip()
+        main_search_text = self.search_input.text().strip()
+
+        # Merge both inputs without overwriting user content
+        combined_parts = []
+        if filter_text:
+            combined_parts.append(filter_text)
+        if main_search_text and main_search_text not in combined_parts:
+            combined_parts.append(main_search_text)
+
+        # The combined text string used for tokenization
+        full_filter_text = " ".join(combined_parts).strip()
+
+        # 2. Tokenize search and extract optional category shortcut (::doc, etc.)
         filter_keywords_list, filter_shortcut_name = tokenize_search_query(full_filter_text)
 
         # Determine the effective category filter for this execution
@@ -1254,12 +1286,9 @@ Keywords are space-separated. Regex must be the final term.""")
                 self.category_combobox.blockSignals(True)
                 self.category_combobox.setCurrentIndex(index)
                 self.category_combobox.blockSignals(False)
-        # --- END NEW LOGIC ---
 
-        # 1. If there are no raw results OR no active filters, restore the original view.
-        # Check: no text tokens AND no active category filter (i.e., effective_category_regex is None)
+        # 3. Early exit if no results or no active filters
         is_all_category = effective_category_regex is None
-
         if not data_to_filter or (not filter_keywords_list and is_all_category):
             if not data_to_filter:
                 self.model.set_data([])
@@ -1273,74 +1302,68 @@ Keywords are space-separated. Regex must be the final term.""")
             self._apply_responsive_column_sizing()
             if self.current_sort_column != -1:
                 self.model.sort(self.current_sort_column, self.current_sort_order)
-                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column,
-                                                                      self.current_sort_order)
+                self.result_table.horizontalHeader().setSortIndicator(
+                    self.current_sort_column, self.current_sort_order)
             else:
                 self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
             return
 
-        # 2. Apply category filtering (on the full dataset)
-        # Use the effective regex determined above
+        # 4. Apply category filtering (regex match)
         if effective_category_regex is not None:
             if effective_category_regex == "DIR_ONLY":
                 data_to_filter = [
-                    (name, path, is_dir) for name, path, is_dir in data_to_filter
-                    if is_dir
+                    (name, path, is_dir) for name, path, is_dir in data_to_filter if is_dir
                 ]
             else:
                 try:
                     # Note: Category filtering is done case-insensitive (re.IGNORECASE is in get_category_regex)
                     category_filter_regex = re.compile(effective_category_regex, re.IGNORECASE)
                     data_to_filter = [
-                        (name, path, is_dir) for name, path, is_dir in data_to_filter
+                        (name, path, is_dir)
+                        for name, path, is_dir in data_to_filter
                         if category_filter_regex.search(os.path.join(path, name))
                     ]
                 except re.error:
-                    # If the regex is invalid, the category filter is ignored
-                    pass
+                    pass  # Ignore invalid regex patterns
 
-        # 3. Apply text filtering (on the results already filtered by category)
+        # 5. Apply text keyword filtering (respecting case sensitivity)
         filtered_results = []
         if filter_keywords_list:
-            # Multi-keyword matching logic (Case-insensitive)
-
-            # Convert keywords to lowercase for case-insensitive matching
-            filter_tokens = [token.lower() for token in filter_keywords_list]
-
-            # The internal list is (name, path, is_dir)
             for name, path, is_dir in data_to_filter:
-                # Convert the full path to lowercase once for comparison
-                full_path_lower = os.path.join(path, name).lower()
+                full_path = os.path.join(path, name)
 
-                # Check if ALL tokens are present in the full path (case-insensitive search)
-                if all(token in full_path_lower for token in filter_tokens):
-                    filtered_results.append((name, path, is_dir))
+                if self.case_insensitive_search:
+                    full_path_cmp = full_path.lower()
+                    if all(token.lower() in full_path_cmp for token in filter_keywords_list):
+                        filtered_results.append((name, path, is_dir))
+                else:
+                    if all(token in full_path for token in filter_keywords_list):
+                        filtered_results.append((name, path, is_dir))
         else:
-            # If there are no filter tokens, the filtered results are those filtered by category
             filtered_results = data_to_filter
 
-        # 4. Update model with filtered results
+        # 6. Update the model and status bar
         raw_count = len(self._raw_plocate_results)
 
         if not filtered_results:
             self.model.set_data([(_("No results match filter"), "", False)])
-            self.update_status_display(_("No results match filter (filtered from {})").format(raw_count))
+            self.update_status_display(
+                _("No results match filter (filtered from {})").format(raw_count))
         else:
             self.model.set_data(filtered_results)
-            # Update status bar with the filtered count
             status_message = _("Found {} results (filtered from {})").format(
-                len(filtered_results), raw_count
-            )
+                len(filtered_results), raw_count)
             self.update_status_display(status_message)
 
             # Restore sorting and column sizing
             self._apply_responsive_column_sizing()
             if self.current_sort_column != -1:
                 self.model.sort(self.current_sort_column, self.current_sort_order)
-                self.result_table.horizontalHeader().setSortIndicator(self.current_sort_column,
-                                                                      self.current_sort_order)
+                self.result_table.horizontalHeader().setSortIndicator(
+                    self.current_sort_column, self.current_sort_order)
             else:
-                self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+                self.result_table.horizontalHeader().setSortIndicator(
+                    -1, Qt.SortOrder.AscendingOrder)
 
     # --- NEW: Non-Blocking Search Runner (Replaces the original blocking logic) ---
     def set_ui_searching_state(self, is_searching: bool):
