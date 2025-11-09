@@ -35,7 +35,8 @@ CATEGORY_SHORTCUTS = {
     "video": _("Videos"),
     "audio": _("Audio"),
     "app": _("Apps"),
-    "code": _("Code"),
+    "code": _("Code/Scripts"),
+    "script": _("Code/Scripts"),
     "zip": _("Archives"),
     "text": _("Generic Text"),
 }
@@ -44,17 +45,79 @@ SHORTCUT_PREFIX = "::"
 
 # --- CATEGORY FILTERING LOGIC (FIXED and TRANSLATED) ---
 # Map display names to a list of extensions (DO NOT include '$' here, it will be added in get_category_regex)
+
+# ARCHIVES
+ARCHIVES_EXTENSIONS = [
+    '.7z', '.ace', '.arj', '.bz2', '.cab', '.gz', '.gzip', '.jar', '.rar',
+    '.tar', '.tgz', '.zip', '.z',
+    # Explicitly include the rar splits (r00-r29)
+    '.r00', '.r01', '.r02', '.r03', '.r04', '.r05', '.r06', '.r07', '.r08',
+    '.r09', '.r10', '.r11', '.r12', '.r13', '.r14', '.r15', '.r16', '.r17',
+    '.r18', '.r19', '.r20', '.r21', '.r22', '.r23', '.r24', '.r25', '.r26',
+    '.r27', '.r28', '.r29',
+]
+
+# APP EXTENSIONS
+APP_EXTENSIONS = [
+    '.appimage', '.exe', '.deb', '.rpm', '.desktop'
+]
+
+# AUDIO
+AUDIO_EXTENSIONS = [
+    '.aac', '.ac3', '.aif', '.aifc', '.aiff', '.au', '.cda', '.dts', '.fla',
+    '.flac', '.it', '.m1a', '.m2a', '.m3u', '.m4a', '.mid', '.midi', '.mka',
+    '.mod', '.mp2', '.mp3', '.mpa', '.ogg', '.opus', '.ra', '.rmi', '.spc',
+    '.snd', '.umx', '.voc', '.wav', '.wma', '.xm'
+]
+
+# IMAGES
+IMAGES_EXTENSIONS = [
+    '.ani', '.bmp', '.gif', '.ico', '.jpe', '.jpeg', '.jpg', '.pcx', '.png',
+    '.psd', '.tga', '.tif', '.tiff', '.webp', '.wmf'
+]
+
+# VIDEO
+VIDEO_EXTENSIONS = [
+    '.3g2', '.3gp', '.3gp2', '.3gpp', '.amr', '.amv', '.asf', '.avi', '.bdmv',
+    '.bik', '.d2v', '.divx', '.drc', '.dsa', '.dsm', '.dss', '.dsv', '.evo',
+    '.f4v', '.flc', '.fli', '.flic', '.flv', '.hdmov', '.ifo', '.ivf', '.m1v',
+    '.m2p', '.m2t', '.m2ts', '.m2v', '.m4b', '.m4p', '.m4v', '.mkv', '.mp2v',
+    '.mp4', '.mp4v', '.mpe', '.mpeg', '.mpg', '.mpls', '.mpv2', '.mpv4', '.mov',
+    '.mts', '.ogm', '.ogv', '.pss', '.pva', '.qt', '.ram', '.ratdvd', '.rm',
+    '.rmm', '.rmvb', '.roq', '.rpm', '.smil', '.smk', '.swf', '.tp', '.tpr',
+    '.ts', '.vob', '.vp6', '.webm', '.wm', '.wmp', '.wmv'
+]
+
+# Core Documents (Office, PDF, Help files, Diagrams)
+DOCUMENT_EXTENSIONS = [
+    '.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm', '.odt', '.pdf', '.rtf',
+    '.xls', '.xlsx', '.xlsm', '.xlsb', '.xltm', '.xltx', '.xlam', '.ods',
+    '.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.ppsm', '.potx', '.potm', '.ppam',
+    '.sldm', '.sldx', '.odp', '.thmx',
+    '.wpd', '.wps', '.wri', '.chm', '.vsd', '.vsdx',
+]
+
+# Code & Scripts (Includes C/C++ and other development files)
+CODE_EXTENSIONS = [
+    '.py', '.sh', '.js', '.c', '.cpp', '.cxx', '.h', '.hpp', '.hxx', '.java', '.lua',
+]
+
+# Generic Text & Configuration (Includes common structured text formats)
+TEXT_EXTENSIONS = [
+    '.txt', '.log', '.md', '.csv', '.ini', '.xml', '.htm', '.html', '.mht', '.mhtml',
+]
+
 FILE_CATEGORIES = {
     _("All Categories"): [],
     _("Directories"): ["DIR_ONLY"],  # Special flag to filter only directories
-    _("Documents"): ['.pdf', '.doc', '.docx', '.odt'],
-    _("Images"): ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
-    _("Videos"): ['.avi', '.mp4', '.mkv', '.mov'],
-    _("Audio"): ['.mp3', '.wav', '.ogg', '.flac', '.m4a'],
-    _("Apps"): ['.appimage', '.exe', '.deb', '.rpm', '.desktop'],  # Added .desktop
-    _("Code/Scripts"): ['.py', '.sh', '.c', '.cpp', '.html', '.js'],
-    _("Archives"): ['.zip', '.rar', '.7z', '.tar', '.gz'],
-    _("Generic Text"): ['.txt', '.log', '.md']
+    _("Documents"): DOCUMENT_EXTENSIONS,
+    _("Images"): IMAGES_EXTENSIONS,
+    _("Videos"): VIDEO_EXTENSIONS,
+    _("Audio"): AUDIO_EXTENSIONS,
+    _("Apps"): APP_EXTENSIONS,
+    _("Code/Scripts"): CODE_EXTENSIONS,
+    _("Archives"): ARCHIVES_EXTENSIONS,
+    _("Generic Text"): TEXT_EXTENSIONS
 }
 
 
