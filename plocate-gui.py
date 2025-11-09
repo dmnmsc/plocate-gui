@@ -676,7 +676,9 @@ class PlocateGUI(QWidget):
         self.resize(800, 700)
 
         # --- Internal State for Preferences and Toggles ---
-        self.case_insensitive_search = False
+        self.case_insensitive_search = True
+        # NEW: Flag to track manual case-sensitive setting from the button
+        self._is_manually_case_sensitive = False
         self.current_category_regex = None  # Stores the current regex filter for category
         # NEW: Store raw results from plocate for in-memory filtering
         # Format: (name, path, is_dir)
@@ -726,6 +728,9 @@ Examples:
 
 Keywords are space-separated. Regex must be the final term.""")
         )
+        # Connect search input to the new case logic
+        self.search_input.textChanged.connect(self.handle_input_case_change)
+
         search_icon = QIcon.fromTheme("edit-find")
         search_action = QAction(search_icon, "", self.search_input)
         # Ensure compatibility with PyQt6 ActionPosition enumeration
@@ -753,8 +758,8 @@ Keywords are space-separated. Regex must be the final term.""")
         self.case_insensitive_btn.setCheckable(True)  # Make it a toggle button
 
         # Initialize state and text (Aa = Case Sensitive OFF)
-        self.case_insensitive_search = False
-        self.case_insensitive_btn.setChecked(self.case_insensitive_search)
+        self.case_insensitive_search = True
+        self.case_insensitive_btn.setChecked(not self.case_insensitive_search)
         self.case_insensitive_btn.setText('Aa')
         self.case_insensitive_btn.setToolTip(
             _("Toggle Case Insensitive Search (-i): Aa = Sensitive | aa = Insensitive"))
@@ -936,11 +941,55 @@ Keywords are space-separated. Regex must be the final term.""")
             self.case_insensitive_btn.setToolTip(
                 _("Search is Case Sensitive (Aa). Click to toggle to Insensitive (aa)."))
 
+    def has_uppercase(self, text: str) -> bool:
+        """Helper to check if a string contains any uppercase characters."""
+        # Using string comparison is usually faster than iterating or using regex for this simple check.
+        return text != text.lower()
+
+    def handle_input_case_change(self, text: str):
+        """
+        Automatically adjusts case-sensitivity based on user input,
+        unless the user has explicitly set it manually via the toggle button.
+        """
+
+        text = text.strip()
+
+        # 1. Handle an empty search field: always reset to case-insensitive default and automatic mode
+        if not text:
+            # Reset the manual flag, restoring automatic behavior
+            if self._is_manually_case_sensitive:
+                self._is_manually_case_sensitive = False
+
+            desired_insensitive = True
+
+        # 2. Check for manual override from the toggle button
+        elif self._is_manually_case_sensitive:
+            return  # Respect the user's manual choice.
+
+        # 3. Determine the desired case-insensitivity state based on content
+        else:
+            contains_uppercase = self.has_uppercase(text)
+            # If text has uppercase (True), desired_insensitive should be False (case-sensitive).
+            desired_insensitive = not contains_uppercase
+
+        # 4. Only change state and update UI/search if necessary
+        if desired_insensitive != self.case_insensitive_search:
+
+            # Change the state
+            self.case_insensitive_search = desired_insensitive
+            self.case_insensitive_btn.setChecked(not self.case_insensitive_search)
+
+            # Update the UI button display
+            self.update_case_insensitive_text()
+
     def toggle_case_insensitive(self):
         """Toggles the internal state, updates the style, and re-runs the search."""
 
         # The button's check state is already updated by the signal
-        self.case_insensitive_search = self.case_insensitive_btn.isChecked()
+        self.case_insensitive_search = not self.case_insensitive_btn.isChecked()
+
+        # MODIFICATION: A manual action (button click) always sets the manual override flag to True.
+        self._is_manually_case_sensitive = True
 
         # Update dynamic text
         self.update_case_insensitive_text()
