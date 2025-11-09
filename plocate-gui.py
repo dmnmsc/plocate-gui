@@ -1690,7 +1690,21 @@ Keywords are space-separated. Regex must be the final term.""")
             event.accept()
             return
 
-        # 6. Handle Escape key (Cancel task, Clear results, or Close app)
+        # 6. Handle ctrl+F for search_input focus
+        elif event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_F:
+            self.search_input.setFocus()
+            self.search_input.selectAll()
+            event.accept()
+            return
+
+        # 7. Handle ctrl+G for filter_input focus
+        elif event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_G:
+            self.filter_input.setFocus()
+            self.filter_input.selectAll()
+            event.accept()
+            return
+
+        # 8. Handle Escape key (Cancel task, Clear results, or Close app)
         elif key == Qt.Key.Key_Escape:
 
             # 1. PRIORITY: Cancel any background task (Update or Search)
