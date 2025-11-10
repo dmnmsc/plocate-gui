@@ -1096,11 +1096,12 @@ Keywords are space-separated. Regex must be the final term.""")
             # Update the button label and tooltip
             self.update_case_insensitive_text()
 
-            # [NEW FLOW]: Apply the same logic used by the toggle button
-            if text:
-                if self._raw_plocate_results:
-                    # In-memory re-filtering now respects the updated sensitivity
-                    self.run_in_memory_filter(rerun_plocate=False)
+            # 5. [BUG FIX]: REMOVE THE IN-MEMORY RE-FILTER CALL.
+            # The auto-toggle should only prepare the search, not trigger a re-filter.
+           # if text:
+           #    if self._raw_plocate_results:
+           #          In-memory re-filtering now respects the updated sensitivity
+           #        self.run_in_memory_filter(rerun_plocate=False)
 
     def toggle_case_insensitive(self):
         """
