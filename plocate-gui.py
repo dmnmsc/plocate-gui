@@ -748,6 +748,8 @@ class PlocateGUI(QWidget):
         self._raw_plocate_results: list[tuple] = []
         # NEW FIX: Store the exact search term used for the last successful plocate call.
         self._last_plocate_term: str = ""
+        #Live filter
+        self.live_filter_enabled = True
         # --- End Internal State ---
 
         # Initialize ThreadPool for non-blocking operations
@@ -851,6 +853,8 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # --- NEW: In-Memory Filter Bar (Row 2: Filter) ---
         filter_layout = QHBoxLayout()
+
+        # 1. Configure the Filter Input Field (self.filter_input)
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText(_("Filter current results (in-memory)..."))
         self.filter_input.setToolTip(
@@ -861,10 +865,51 @@ Keywords are space-separated. Regex must be the final term.""")
         self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
         self.filter_input.setClearButtonEnabled(True)
 
-        # Connect the text change signal to the new in-memory filter method
-        self.filter_input.textChanged.connect(self.run_in_memory_filter)
+        # 2. Configure the Live Filter Toggle (self.live_filter_toggle)
+        self.live_filter_toggle = QPushButton()
+        self.live_filter_toggle.setCheckable(True)
+        self.live_filter_toggle.setFixedWidth(36)
+
+        # Set initial state and text
+        self.live_filter_toggle.setChecked(self.live_filter_enabled)
+        # NOTE: This function must be defined in PlocateGUI class
+        self._update_live_filter_text()
+
+        # Set ToolTip for clarity
+        self.live_filter_toggle.setToolTip(
+            _("Toggle real-time filtering (ON/OFF). Disable for large results and press Enter to filter.")
+        )
+        # Connect signal: we use clicked() for checkable buttons
+        # NOTE: This function must be defined in PlocateGUI class
+        self.live_filter_toggle.clicked.connect(self._handle_live_filter_toggle_button)
 
         filter_layout.addWidget(self.filter_input)
+
+        # >>> NEW: Toggle for the Live Filter <<<
+        self.live_filter_toggle = QPushButton()  # Use a short text like "Auto"
+        self.live_filter_toggle.setCheckable(True)  # Make it a toggle button
+        self.live_filter_toggle.setFixedWidth(36)  # Match the width of the 'Aa' button
+
+        # Set initial state
+        self.live_filter_toggle.setChecked(self.live_filter_enabled)
+        self._update_live_filter_text()
+
+        # Set ToolTip for clarity
+        self.live_filter_toggle.setToolTip(
+            _("Toggle real-time filtering (ON/OFF). Disable for large results and press Enter to filter.")
+        )
+        # Connect signal: we use clicked() for checkable buttons
+        # The slot remains the same, but the signal is now 'clicked'
+        self.live_filter_toggle.clicked.connect(self._handle_live_filter_toggle_button)
+
+        filter_layout.addWidget(self.live_filter_toggle)
+
+        # >>> NEW CONDITIONAL CONNECTIONS <<<
+        # 1. Conditional connection: only filters if Live Filter is active
+        self.filter_input.textChanged.connect(self._handle_filter_input_change)
+        # 2. Enter connection: always filters when Enter is pressed
+        self.filter_input.returnPressed.connect(self.run_in_memory_filter)
+
         main_layout.addLayout(filter_layout)
         # --- END NEW FILTER BAR ---
 
@@ -1368,6 +1413,38 @@ Keywords are space-separated. Regex must be the final term.""")
             else:
                 self.result_table.horizontalHeader().setSortIndicator(
                     -1, Qt.SortOrder.AscendingOrder)
+
+    def _handle_live_filter_toggle_button(self, is_checked: bool):
+        """
+        Handles the state change of the Live Filter QPushButton toggle.
+        """
+        # is_checked is the new state of the button (True/False)
+        self.live_filter_enabled = is_checked
+
+        # Update the button text to reflect the new state (ON/OFF)
+        self._update_live_filter_text()
+
+        if self.live_filter_enabled:
+            # If live filtering is just activated, apply the filter immediately
+            self.run_in_memory_filter()
+
+    def _update_live_filter_text(self):
+        """Sets the live filter button text based on its internal state (ON/OFF)."""
+        if self.live_filter_enabled:
+            # The filter is currently ON
+            self.live_filter_toggle.setText(_("ON"))
+        else:
+            # The filter is currently OFF
+            self.live_filter_toggle.setText(_("OFF"))
+
+    def _handle_filter_input_change(self):
+        """
+        Conditional handler for filter_input.textChanged.
+        Runs the filter only if self.live_filter_enabled is True.
+        When False, the filter is only executed on pressing Enter (via returnPressed).
+        """
+        if self.live_filter_enabled:
+            self.run_in_memory_filter()
 
     # --- NEW: Non-Blocking Search Runner (Replaces the original blocking logic) ---
     def set_ui_searching_state(self, is_searching: bool):
