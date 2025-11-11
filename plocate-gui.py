@@ -875,7 +875,7 @@ Keywords are space-separated. Regex must be the final term.""")
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText(_("Filter current results (in-memory)..."))
         self.filter_input.setToolTip(
-            _("Filters the visible results list in real-time. This does NOT re-run the plocate search.")
+            _("Filters the visible results list. This does NOT re-run the plocate search.")
         )
         filter_icon = QIcon.fromTheme("view-filter")
         filter_action = QAction(filter_icon, "", self.filter_input)
