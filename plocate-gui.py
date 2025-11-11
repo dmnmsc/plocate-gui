@@ -793,9 +793,6 @@ class PlocateGUI(QWidget):
         self.case_insensitive_btn.setToolTip(
             _("Toggle Case Insensitive Search (-i): Aa = Sensitive | aa = Insensitive"))
 
-        # Set a fixed, slightly larger size for text visibility
-        #self.case_insensitive_btn.setFixedSize(36,36)
-        self.case_insensitive_btn.setFixedWidth(36)
         # Initial text update based on default state
         self.update_case_insensitive_text()
 
@@ -858,7 +855,6 @@ Keywords are space-separated. Regex must be the final term.""")
         # >>> NEW: Toggle for the Live Filter <<<
         self.live_filter_toggle = QPushButton()  # Use a short text like "Auto"
         self.live_filter_toggle.setCheckable(True)  # Make it a toggle button
-        self.live_filter_toggle.setFixedWidth(36)  # Match the width of the 'Aa' button
 
         # Set initial state
         self.live_filter_toggle.setChecked(self.live_filter_enabled)
@@ -866,7 +862,7 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # Set ToolTip for clarity
         self.live_filter_toggle.setToolTip(
-            _("Toggle real-time filtering (ON/OFF). Disable for large results and press Enter to filter.")
+            _("AUTO filters results in real-time\nENTER requires pressing Enter to filter")
         )
         # Connect signal: we use clicked() for checkable buttons
         # The slot remains the same, but the signal is now 'clicked'
@@ -1029,12 +1025,12 @@ Keywords are space-separated. Regex must be the final term.""")
             # Case Insensitive ON: 'aa' (case doesn't matter)
             self.case_insensitive_btn.setText('aa')
             self.case_insensitive_btn.setToolTip(
-                _("Search is Case Insensitive (-i). Click to toggle to Sensitive (Aa)."))
+                _("Click to activate Case Sensitive (Aa) search."))
         else:
             # Case Insensitive OFF: 'Aa' (case matters)
             self.case_insensitive_btn.setText('Aa')
             self.case_insensitive_btn.setToolTip(
-                _("Search is Case Sensitive (Aa). Click to toggle to Insensitive (aa)."))
+                _("Click to activate Case Insensitive (-i) search."))
 
     def has_uppercase(self, text: str) -> bool:
         """Helper to check if a string contains any uppercase characters."""
@@ -1418,10 +1414,10 @@ Keywords are space-separated. Regex must be the final term.""")
         """Sets the live filter button text based on its internal state (ON/OFF)."""
         if self.live_filter_enabled:
             # The filter is currently ON
-            self.live_filter_toggle.setText(_("ON"))
+            self.live_filter_toggle.setText(_("AUTO"))
         else:
             # The filter is currently OFF
-            self.live_filter_toggle.setText(_("OFF"))
+            self.live_filter_toggle.setText(_("ENTER"))
 
     def _handle_filter_input_change(self):
         """
