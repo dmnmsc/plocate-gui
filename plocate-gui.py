@@ -830,7 +830,7 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # Category Filter ComboBox (UPDATED TO INCLUDE ICONS)
         self.category_combobox = QComboBox()
-        self.category_combobox.setToolTip(_("Filter results by file category."))
+        self.category_combobox.setToolTip(_("Filter results by file category\n\n CTRL+SHIFT+F"))
 
         # Populate with translated names and set icons for each item
         for key in FILE_CATEGORIES.keys():
@@ -1861,8 +1861,42 @@ Keywords are space-separated. Regex must be the final term.""")
             event.accept()
             return
 
+        # 12. Handle Ctrl + Shift + F for category filter focus
+        is_ctrl_shift_f = (event.key() == Qt.Key.Key_F and
+                           (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and
+                           (event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+
+        if is_ctrl_shift_f:
+            self.category_combobox.showPopup()
+            event.accept()
+            return
+
         # Default behavior
         super().keyPressEvent(event)
+
+    def eventFilter(self, source, event):
+        """
+        Intercepts key press events on the result table to handle Ctrl+Tab
+        before the QTableView consumes the Tab key for internal navigation.
+        """
+        # Only intercept KeyPress events from the results table
+        if source == self.result_table and event.type() == QEvent.Type.KeyPress:
+
+            key = event.key()
+            modifiers = event.modifiers()
+
+            # Check for Ctrl + Tab
+            is_ctrl_tab = (key == Qt.Key.Key_Tab and (modifiers & Qt.KeyboardModifier.ControlModifier))
+
+            if is_ctrl_tab:
+                # If we are in the table and Ctrl+Tab is pressed, force focus back to the search input
+                self.search_input.setFocus()
+
+                # CRITICAL: Return True to signify the event has been handled and should NOT proceed
+                return True
+
+                # For all other events or sources, pass them to the original destination
+        return super().eventFilter(source, event)
 
     # -------------------------------------------------------------------------
     # --- NON-BLOCKING DATABASE UPDATE LOGIC (REPLACEMENT FOR OLD METHODS) ---
@@ -2074,30 +2108,6 @@ Keywords are space-separated. Regex must be the final term.""")
         else:
             # User clicked Cancel or closed the dialog
             QMessageBox.information(self, _("Info"), _("Database update cancelled."))
-
-    def eventFilter(self, source, event):
-        """
-        Intercepts key press events on the result table to handle Ctrl+Tab
-        before the QTableView consumes the Tab key for internal navigation.
-        """
-        # Only intercept KeyPress events from the results table
-        if source == self.result_table and event.type() == QEvent.Type.KeyPress:
-
-            key = event.key()
-            modifiers = event.modifiers()
-
-            # Check for Ctrl + Tab
-            is_ctrl_tab = (key == Qt.Key.Key_Tab and (modifiers & Qt.KeyboardModifier.ControlModifier))
-
-            if is_ctrl_tab:
-                # If we are in the table and Ctrl+Tab is pressed, force focus back to the search input
-                self.search_input.setFocus()
-
-                # CRITICAL: Return True to signify the event has been handled and should NOT proceed
-                return True
-
-                # For all other events or sources, pass them to the original destination
-        return super().eventFilter(source, event)
 
 
 if __name__ == "__main__":
