@@ -1092,8 +1092,8 @@ Keywords are space-separated. Regex must be the final term.""")
         # The button's check state is already updated by the signal
         self.case_insensitive_search = not self.case_insensitive_btn.isChecked()
 
-        # MODIFICATION: A manual action (button click) always sets the manual override flag to True.
-        self._is_manually_case_sensitive = True
+        # MODIFICATION: Set manual flag only when forcing Case Sensitive (Aa), allowing auto-detection otherwise.
+        self._is_manually_case_sensitive = not self.case_insensitive_search
 
         # Update dynamic text
         self.update_case_insensitive_text()
