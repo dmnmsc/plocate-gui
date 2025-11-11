@@ -748,7 +748,7 @@ class PlocateGUI(QWidget):
         self._raw_plocate_results: list[tuple] = []
         # NEW FIX: Store the exact search term used for the last successful plocate call.
         self._last_plocate_term: str = ""
-        #Live filter
+        # Live filter
         self.live_filter_enabled = True
         # --- End Internal State ---
 
@@ -780,6 +780,30 @@ class PlocateGUI(QWidget):
 
         # Input and Options container (Row 1: Main Search, Category, Case, Update)
         search_options_layout = QHBoxLayout()
+
+        # *** MODIFICATION: ADD CASE INSENSITIVE TOGGLE FIRST ***
+        # Case Insensitive Toggle Button (Dynamic Text) - FOR SEARCH
+        self.case_insensitive_btn = QPushButton()
+        self.case_insensitive_btn.setCheckable(True)  # Make it a toggle button
+
+        # Initialize state and text (Aa = Case Sensitive OFF)
+        self.case_insensitive_search = True
+        self.case_insensitive_btn.setChecked(not self.case_insensitive_search)
+        self.case_insensitive_btn.setText('Aa')
+        self.case_insensitive_btn.setToolTip(
+            _("Toggle Case Insensitive Search (-i): Aa = Sensitive | aa = Insensitive"))
+
+        # Set a fixed, slightly larger size for text visibility
+        #self.case_insensitive_btn.setFixedSize(36,36)
+        self.case_insensitive_btn.setFixedWidth(36)
+        # Initial text update based on default state
+        self.update_case_insensitive_text()
+
+        # Connect signal: we use clicked() for checkable buttons
+        self.case_insensitive_btn.clicked.connect(self.toggle_case_insensitive)
+
+        #  *** MODIFICATION: ADD TOGGLE FIRST ***
+        search_options_layout.addWidget(self.case_insensitive_btn)
 
         # Search input with icon and CLEAR BUTTON
         self.search_input = QLineEdit()
@@ -820,29 +844,6 @@ Keywords are space-separated. Regex must be the final term.""")
         self.category_combobox.currentIndexChanged.connect(self.category_changed)
         search_options_layout.addWidget(self.category_combobox)
 
-        # Case Insensitive Toggle Button (Dynamic Text) - FOR SEARCH
-        self.case_insensitive_btn = QPushButton()
-        self.case_insensitive_btn.setCheckable(True)  # Make it a toggle button
-
-        # Initialize state and text (Aa = Case Sensitive OFF)
-        self.case_insensitive_search = True
-        self.case_insensitive_btn.setChecked(not self.case_insensitive_search)
-        self.case_insensitive_btn.setText('Aa')
-        self.case_insensitive_btn.setToolTip(
-            _("Toggle Case Insensitive Search (-i): Aa = Sensitive | aa = Insensitive"))
-
-        # Set a fixed, slightly larger size for text visibility
-        #self.case_insensitive_btn.setFixedSize(36,36)
-        self.case_insensitive_btn.setFixedWidth(36)
-        # Initial text update based on default state
-        self.update_case_insensitive_text()
-
-        # Connect signal: we use clicked() for checkable buttons
-        self.case_insensitive_btn.clicked.connect(self.toggle_case_insensitive)
-
-        # Add the compact button to the search layout
-        search_options_layout.addWidget(self.case_insensitive_btn)
-
         self.unified_update_btn = QPushButton(_("Update DB"))  # Short text
         self.unified_update_btn.setIcon(QIcon.fromTheme("view-refresh"))
         self.unified_update_btn.setToolTip(_("Select which database(s) you wish to update. (F5)"))
@@ -853,37 +854,6 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # --- NEW: In-Memory Filter Bar (Row 2: Filter) ---
         filter_layout = QHBoxLayout()
-
-        # 1. Configure the Filter Input Field (self.filter_input)
-        self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText(_("Filter current results (in-memory)..."))
-        self.filter_input.setToolTip(
-            _("Filters the visible results list in real-time. This does NOT re-run the plocate search.")
-        )
-        filter_icon = QIcon.fromTheme("view-filter")
-        filter_action = QAction(filter_icon, "", self.filter_input)
-        self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
-        self.filter_input.setClearButtonEnabled(True)
-
-        # 2. Configure the Live Filter Toggle (self.live_filter_toggle)
-        self.live_filter_toggle = QPushButton()
-        self.live_filter_toggle.setCheckable(True)
-        self.live_filter_toggle.setFixedWidth(36)
-
-        # Set initial state and text
-        self.live_filter_toggle.setChecked(self.live_filter_enabled)
-        # NOTE: This function must be defined in PlocateGUI class
-        self._update_live_filter_text()
-
-        # Set ToolTip for clarity
-        self.live_filter_toggle.setToolTip(
-            _("Toggle real-time filtering (ON/OFF). Disable for large results and press Enter to filter.")
-        )
-        # Connect signal: we use clicked() for checkable buttons
-        # NOTE: This function must be defined in PlocateGUI class
-        self.live_filter_toggle.clicked.connect(self._handle_live_filter_toggle_button)
-
-        filter_layout.addWidget(self.filter_input)
 
         # >>> NEW: Toggle for the Live Filter <<<
         self.live_filter_toggle = QPushButton()  # Use a short text like "Auto"
@@ -902,7 +872,22 @@ Keywords are space-separated. Regex must be the final term.""")
         # The slot remains the same, but the signal is now 'clicked'
         self.live_filter_toggle.clicked.connect(self._handle_live_filter_toggle_button)
 
+        # *** MODIFICATION: ADD LIVE FILTER TOGGLE FIRST ***
         filter_layout.addWidget(self.live_filter_toggle)
+
+        # 1. Configure the Filter Input Field (self.filter_input)
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText(_("Filter current results (in-memory)..."))
+        self.filter_input.setToolTip(
+            _("Filters the visible results list in real-time. This does NOT re-run the plocate search.")
+        )
+        filter_icon = QIcon.fromTheme("view-filter")
+        filter_action = QAction(filter_icon, "", self.filter_input)
+        self.filter_input.addAction(filter_action, QLineEdit.ActionPosition.LeadingPosition)
+        self.filter_input.setClearButtonEnabled(True)
+
+        # *** MODIFICATION: ADD FILTER INPUT SECOND ***
+        filter_layout.addWidget(self.filter_input)
 
         # >>> NEW CONDITIONAL CONNECTIONS <<<
         # 1. Conditional connection: only filters if Live Filter is active
@@ -1098,10 +1083,10 @@ Keywords are space-separated. Regex must be the final term.""")
 
             # 5. [BUG FIX]: REMOVE THE IN-MEMORY RE-FILTER CALL.
             # The auto-toggle should only prepare the search, not trigger a re-filter.
-           # if text:
-           #    if self._raw_plocate_results:
-           #          In-memory re-filtering now respects the updated sensitivity
-           #        self.run_in_memory_filter(rerun_plocate=False)
+            # if text:
+            #    if self._raw_plocate_results:
+            #          In-memory re-filtering now respects the updated sensitivity
+            #        self.run_in_memory_filter(rerun_plocate=False)
 
     def toggle_case_insensitive(self):
         """
