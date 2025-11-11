@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
-    QRunnable, QThreadPool, pyqtSignal, QObject
+    QRunnable, QThreadPool, pyqtSignal, QObject, QEvent
 )
 from PyQt6.QtGui import QDesktopServices, QIcon, QAction, QGuiApplication
 import os
@@ -920,6 +920,9 @@ Keywords are space-separated. Regex must be the final term.""")
         self.result_table.customContextMenuRequested.connect(self.show_context_menu)
         # ---------------------------
 
+        # NEW: Install the event filter on the results table
+        self.result_table.installEventFilter(self)
+
         main_layout.addWidget(self.result_table)
 
         # Get the database modification status to display as the default text
@@ -1824,6 +1827,20 @@ Keywords are space-separated. Regex must be the final term.""")
             event.accept()
             return
 
+        # 9. Handle Ctrl + Tab (Cycle between search and filter inputs ONLY)
+        is_ctrl_tab = (key == Qt.Key.Key_Tab and (modifiers & Qt.KeyboardModifier.ControlModifier))
+
+        if is_ctrl_tab:
+            if self.search_input.hasFocus():
+                self.filter_input.setFocus()
+            elif self.filter_input.hasFocus():
+                self.search_input.setFocus()
+
+            # The eventFilter handles the case where the table has focus.
+            # We only need to accept if the event was Ctrl+Tab.
+            event.accept()
+            return
+
         # Default behavior
         super().keyPressEvent(event)
 
@@ -2037,6 +2054,30 @@ Keywords are space-separated. Regex must be the final term.""")
         else:
             # User clicked Cancel or closed the dialog
             QMessageBox.information(self, _("Info"), _("Database update cancelled."))
+
+    def eventFilter(self, source, event):
+        """
+        Intercepts key press events on the result table to handle Ctrl+Tab
+        before the QTableView consumes the Tab key for internal navigation.
+        """
+        # Only intercept KeyPress events from the results table
+        if source == self.result_table and event.type() == QEvent.Type.KeyPress:
+
+            key = event.key()
+            modifiers = event.modifiers()
+
+            # Check for Ctrl + Tab
+            is_ctrl_tab = (key == Qt.Key.Key_Tab and (modifiers & Qt.KeyboardModifier.ControlModifier))
+
+            if is_ctrl_tab:
+                # If we are in the table and Ctrl+Tab is pressed, force focus back to the search input
+                self.search_input.setFocus()
+
+                # CRITICAL: Return True to signify the event has been handled and should NOT proceed
+                return True
+
+                # For all other events or sources, pass them to the original destination
+        return super().eventFilter(source, event)
 
 
 if __name__ == "__main__":
