@@ -1504,6 +1504,9 @@ Keywords are space-separated. Regex must be the final term.""")
         else:
             self.model.set_data(display_rows)
 
+        # NEW: Move focus to the results table for immediate navigation
+        self.result_table.setFocus()
+
     def run_search(self):
         """
         Parses the query and launches the non-blocking SearchWorker.
