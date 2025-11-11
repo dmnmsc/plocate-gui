@@ -862,7 +862,7 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # Set ToolTip for clarity
         self.live_filter_toggle.setToolTip(
-            _("AUTO filters results in real-time\nENTER requires pressing Enter to filter")
+            _("AUTO filters results in real-time\nENTER requires pressing Enter to filter\nCTRL+SHIFT+L toggles")
         )
         # Connect signal: we use clicked() for checkable buttons
         # The slot remains the same, but the signal is now 'clicked'
@@ -1029,12 +1029,12 @@ Keywords are space-separated. Regex must be the final term.""")
             # Case Insensitive ON: 'aa' (case doesn't matter)
             self.case_insensitive_btn.setText('aa')
             self.case_insensitive_btn.setToolTip(
-                _("Click to activate Case Sensitive (Aa) search."))
+                _("Click to activate Case Sensitive (Aa) search\n\nCTRL+SHIFT+C toggles"))
         else:
             # Case Insensitive OFF: 'Aa' (case matters)
             self.case_insensitive_btn.setText('Aa')
             self.case_insensitive_btn.setToolTip(
-                _("Click to activate Case Insensitive (-i) search."))
+                _("Click to activate Case Insensitive (-i) search\n\nCTRL+SHIFT+C toggles"))
 
     def has_uppercase(self, text: str) -> bool:
         """Helper to check if a string contains any uppercase characters."""
@@ -1838,6 +1838,26 @@ Keywords are space-separated. Regex must be the final term.""")
 
             # The eventFilter handles the case where the table has focus.
             # We only need to accept if the event was Ctrl+Tab.
+            event.accept()
+            return
+
+        # 10. Handle Ctrl + Shift + C (Toggle Case Sensitive)
+        is_ctrl_shift_c = (key == Qt.Key.Key_C and
+                           (modifiers & Qt.KeyboardModifier.ControlModifier) and
+                           (modifiers & Qt.KeyboardModifier.ShiftModifier))
+
+        if is_ctrl_shift_c:
+            self.case_insensitive_btn.click()
+            event.accept()
+            return
+
+        # 11. Handle Ctrl + Shift + L (Toggle Auto Filter)
+        is_ctrl_shift_l = (key == Qt.Key.Key_L and
+                           (modifiers & Qt.KeyboardModifier.ControlModifier) and
+                           (modifiers & Qt.KeyboardModifier.ShiftModifier))
+
+        if is_ctrl_shift_l:
+            self.live_filter_toggle.click()
             event.accept()
             return
 
