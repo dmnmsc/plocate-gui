@@ -988,6 +988,7 @@ Keywords are space-separated. Regex must be the final term.""")
         main_layout.addLayout(btn_layout)
 
         self.setLayout(main_layout)
+        self.search_input.setFocus()
 
     # --- NEW METHOD: Get Database Modification Status ---
     def get_db_mod_date_status(self) -> str:
