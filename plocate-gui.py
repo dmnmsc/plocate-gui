@@ -138,7 +138,7 @@ def get_category_regex(category_name: str) -> str | None:
         return None  # 'All Categories' or empty list
 
     if extensions_list[0] == "DIR_ONLY":
-        return r"^(?:[^\n]*\/)?[^\/\.]*$"
+        return "FILTER_BY_IS_DIR_TYPE"
 
     # We escape the extension and explicitly add the '$' at the end of the pattern
     # to anchor the match to the end of the path/filename.
@@ -448,8 +448,8 @@ class SearchWorker(QRunnable):
 
             # 2. Category Filtering Logic
             if self.category_regex is not None:
-                if self.category_regex == "DIR_ONLY":
-                    files = [f for f in files if f.endswith(os.path.sep)]
+                if self.category_regex == "FILTER_BY_IS_DIR_TYPE":
+                    pass
                 else:
                     category_filter_regex = re.compile(self.category_regex, re.IGNORECASE)
                     files = [f for f in files if category_filter_regex.search(f)]
@@ -1349,21 +1349,19 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # 4. Apply category filtering (regex match)
         if effective_category_regex is not None:
-            if effective_category_regex == "DIR_ONLY":
+            if effective_category_regex == "FILTER_BY_IS_DIR_TYPE":
+                # FIX: Filter directly by the is_dir property (index 2 of the tuple)
                 data_to_filter = [
-                    (name, path, is_dir) for name, path, is_dir in data_to_filter if is_dir
-                ]
+                    (name, path, is_dir) for name, path, is_dir in data_to_filter if is_dir]
             else:
                 try:
                     # Note: Category filtering is done case-insensitive (re.IGNORECASE is in get_category_regex)
                     category_filter_regex = re.compile(effective_category_regex, re.IGNORECASE)
-                    data_to_filter = [
-                        (name, path, is_dir)
-                        for name, path, is_dir in data_to_filter
-                        if category_filter_regex.search(os.path.join(path, name))
-                    ]
-                except re.error:
-                    pass  # Ignore invalid regex patterns
+                    data_to_filter = [f for f in data_to_filter if
+                                      category_filter_regex.search(f[0]) or category_filter_regex.search(f[1])]
+                except re.error as e:
+                    self.update_status_display(_("Invalid Category Regex: {}").format(e))
+                    data_to_filter = []
 
         # 5. Apply text keyword filtering (respecting case sensitivity)
         filtered_results = []
