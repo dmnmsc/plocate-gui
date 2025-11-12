@@ -1643,8 +1643,9 @@ Keywords are space-separated. Regex must be the final term.""")
             QMessageBox.information(self, _("Info"), _("Please select a valid result row."))
             return
 
-        # If it's a directory, open its full path; if it's a file, open the parent path ('path')
-        path_to_open = os.path.join(path, name) if is_dir and path != os.path.sep else path
+        # FIX: The path to open is ALWAYS the 'path' variable,
+        # which represents the containing folder (parent directory).
+        path_to_open = path
 
         QDesktopServices.openUrl(QUrl.fromLocalFile(path_to_open))
 
