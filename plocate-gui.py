@@ -1636,18 +1636,61 @@ Keywords are space-separated. Regex must be the final term.""")
         QDesktopServices.openUrl(QUrl.fromLocalFile(full_path))
 
     def open_path(self):
-        """Opens the containing folder of the selected item."""
+        """
+        Opens the containing folder of the selected item and attempts to highlight (select)
+        the item using standard Linux file managers, preventing GUI freeze. If selection
+        fails, it falls back to reliably opening the parent directory.
+        """
         # Unpack 3 elements
         name, path, is_dir = self.get_selected_row_data()
         if not name or not path:
             QMessageBox.information(self, _("Info"), _("Please select a valid result row."))
             return
 
-        # FIX: The path to open is ALWAYS the 'path' variable,
-        # which represents the containing folder (parent directory).
-        path_to_open = path
+        # 1. Define the full path of the element we want to select/highlight
+        target_path = os.path.join(path, name)
 
-        QDesktopServices.openUrl(QUrl.fromLocalFile(path_to_open))
+        # Handle the special case of the root ('/')
+        if target_path == os.path.sep:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(target_path))
+            return
+
+        # 2. Logic to attempt selecting/highlighting the file (Using Popen to prevent GUI freeze)
+
+        # Only include managers with known, robust '--select' flags.
+        commands_to_try = [
+            ['dolphin', '--select', target_path],  # KDE
+            ['nautilus', '--select', target_path],  # GNOME
+        ]
+
+        success = False
+
+        # Try the select/highlight commands
+        for cmd in commands_to_try:
+            try:
+                # Use Popen for non-blocking execution.
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                success = True
+                break  # Exit the loop if the launch is successful.
+            except (FileNotFoundError, OSError):
+                # Command not found or failed to launch.
+                continue
+
+        if not success:
+            # Fallback Chain: If selection fails, open the parent directory reliably.
+            parent_path = path
+
+            # TIER 2: Attempt 1 - Non-blocking standard Linux opener (xdg-open via Popen)
+            try:
+                subprocess.Popen(['xdg-open', parent_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # We treat this Popen launch as successful for the user, no further action needed.
+            except (FileNotFoundError, OSError):
+                # TIER 3: Attempt 2 - Final, most reliable, but potentially blocking Qt method
+                try:
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(parent_path))
+                except Exception as e:
+                    QMessageBox.critical(self, _("Error"),
+                                         _("Could not open the directory: ") + str(e))
 
     def open_in_terminal(self):
         """
