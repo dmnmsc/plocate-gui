@@ -1498,19 +1498,19 @@ Keywords are space-separated. Regex must be the final term.""")
         # 1. Store the successful (but pre-in-memory-filtered) results
         self._raw_plocate_results = display_rows
 
-        # 2. Run the in-memory filter to populate the visible table
-        self.run_in_memory_filter()
-
-        # Note: Status bar update, sorting, and sizing are now handled inside run_in_memory_filter()
-        # because the filter might reduce the displayed count immediately.
+        # Handle the case where plocate returned zero results (empty table).
         if not display_rows:
             self.model.set_data([(_("No results found"), "", False)])
             self.update_status_display(_("No results found"))
-        else:
-            self.model.set_data(display_rows)
+            return
 
-        # NEW: Move focus to the results table for immediate navigation
-        self.result_table.setFocus()
+            # 2. Run the in-memory filter to populate the visible table.
+        # This also handles status messages for filtered results.
+        self.run_in_memory_filter()
+
+        # Move focus to the table header instead of the table itself.
+        # This avoids the automatic selection of the first row when results are present.
+        self.result_table.horizontalHeader().setFocus()
 
     def run_search(self):
         """
