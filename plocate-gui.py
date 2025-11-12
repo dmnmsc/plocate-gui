@@ -225,13 +225,17 @@ def human_readable_size(size, decimal_places=2):
 def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     """Returns a QIcon based on the file extension or if it is a directory."""
 
+    if is_dir:
+        return QIcon.fromTheme("folder")
+
     if not filepath or filepath == _("No results found") or filepath == _("Search failed") or filepath == _("No results match filter"):
         return QIcon.fromTheme("dialog-warning")
 
-    # 1. Directory Icon
+    # 1. Handle files without extensions (e.g., 'sidedoor', executables)
     basename = os.path.basename(filepath)
-    if is_dir or ('.' not in basename and basename != ''):
-        return QIcon.fromTheme("folder")
+
+    if '.' not in basename:
+        return QIcon.fromTheme("text-x-generic")
 
     # 2. Icon based on Common Extensions (using Freedesktop icon naming spec)
     ext = os.path.splitext(filepath)[1].lower()
@@ -479,7 +483,7 @@ class SearchWorker(QRunnable):
                 if not filepath:
                     continue
 
-                is_dir = filepath.endswith(os.path.sep)
+                is_dir = os.path.isdir(filepath)
 
                 if filepath == os.path.sep:
                     name = os.path.sep
