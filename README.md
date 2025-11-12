@@ -3,31 +3,45 @@
 A simple GUI for the `plocate` command-line utility on Linux systems. Built with PyQt6.
 
 <div align="center">
-  <img src="screenshots/plocate-gui.png" alt="plocate-gui main window"  width="70%" />
+  <img src="screenshots/plocate-gui.png" alt="plocate-gui main window"  width="70%" />
 </div>
 
 ## Features
 
-* **Fast Search:** Leverages the optimized `plocate` database.
+* **Fast Search:** Uses the `plocate` database.
 
-* **Dual Database:** Searches simultaneously in the main system database (`/var/lib/plocate/plocate.db`) and an optional database for external media (`/var/lib/plocate/media.db`).
+* **Dual Database Support:** Searches system and optional external media databases concurrently.
 
-* **Search Options:** Supports case-insensitive search (`-i`) and filtering by regular expressions.
+* **Search Options:** Supports case-insensitive search (`-i`), regular expressions, and category filtering.
 
-* **DB Update:** Capability to execute `updatedb` (using `pkexec`) to update the system index and/or the external media index (`/run/media`).
+* **Database Update:** Executes `updatedb` via `pkexec` for system and external media indexes.
 
-* **Navigation:** Double-click to open the file or the containing folder.
+* **Item Selection (Reveal):** Highlights/selects the file in the native file manager when opening the containing folder (supports Dolphin and Nautilus).
 
-* **Responsive Design:** Automatic adjustment of table column sizes when resizing the window.
+* **Adaptive Design:** Automatic adjustment of table column widths when resizing the window.
 
+* **Keyboard Shortcuts:**
+    * **Enter** / Double-click: Opens the selected file.
+    * **Ctrl+Enter** / Double-click (Path Column): Opens the containing folder.
+    * **Ctrl+Shift+T**: Opens the containing folder in the **Terminal**.
+    * **Ctrl+F**: Moves focus to the Search input field.
+    * **Ctrl+G**: Moves focus to the Filter input field.
+    * **Ctrl+Tab**: Cycles focus between the Search and Filter input fields.
+    * **Ctrl+Shift+C**: Toggles Case Sensitivity.
+    * **Ctrl+Shift+L**: Toggles Live Filtering (auto-filter).
+    * **Ctrl+Shift+F**: Opens the Category Filter dropdown menu.
+    * **F5**: Executes the database update process (`updatedb`).
+    * **F1**: Opens the application's documentation/help.
+    * **Esc**: Cancels current search/update task, clears results, or closes the application.
+
+---
 ## Requirements
 
 * Python 3.x
-
 * The `plocate` package.
-
 * PyQt6 libraries.
 
+---
 ## Database Usage
 
 The application is configured to work with the following default databases:
