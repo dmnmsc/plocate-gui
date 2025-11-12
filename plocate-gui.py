@@ -1790,7 +1790,9 @@ Keywords are space-separated. Regex must be the final term.""")
         is_enter = key in [Qt.Key.Key_Return, Qt.Key.Key_Enter]
 
         # FIX: Check if the focus is on the results table before processing file opening actions.
-        is_table_focused = self.result_table.hasFocus() or self.result_table.viewport().hasFocus()
+        is_table_focused = (self.result_table.hasFocus()
+                            or self.result_table.viewport().hasFocus()
+                            or self.result_table.horizontalHeader().hasFocus())
 
         # 1. Handle Ctrl + Enter (Opens Path) - PRIORITY
         if is_enter and (modifiers & Qt.KeyboardModifier.ControlModifier) and selected_rows:
