@@ -7,7 +7,8 @@ import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
-    QMenu, QProgressBar, QComboBox, QDialog, QDialogButtonBox, QGroupBox
+    QMenu, QProgressBar, QComboBox, QDialog, QDialogButtonBox, QGroupBox,
+    QToolButton, QWidgetAction
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
@@ -399,12 +400,13 @@ class SearchSignals(QObject):
 class SearchWorker(QRunnable):
     """Runnable that performs the plocate search and filtering in a separate thread."""
 
-    def __init__(self, plocate_term, post_plocate_filters, category_regex, case_insensitive):
+    def __init__(self, plocate_term, post_plocate_filters, category_regex, case_insensitive, db_selection):
         super().__init__()
         self.plocate_term = plocate_term
         self.post_plocate_filters = post_plocate_filters
         self.category_regex = category_regex
         self.case_insensitive = case_insensitive
+        self.db_selection = db_selection  # NEW: Store the selected database path/type
         self.signals = SearchSignals()
         self._is_canceled = False  # Internal cancellation flag
 
@@ -416,14 +418,26 @@ class SearchWorker(QRunnable):
         """The main search and filtering logic."""
         try:
             # 1. Build and run the base plocate command
-            plocate_command = ["plocate", self.plocate_term]
+            plocate_command = ["plocate"]
 
+            # 1.1. Determine Case Insensitivity
             if self.case_insensitive:
-                plocate_command.insert(1, "-i")
+                plocate_command.append("-i")
 
-            if os.path.exists(MEDIA_DB_PATH):
+            # 1.2. Determine Database (NEW LOGIC)
+            db_selection = self.db_selection
+
+            if db_selection == "both":
+                # To search in BOTH, we must explicitly combine the two paths with ':'
                 db_list = f"{DEFAULT_DB_PATH}:{MEDIA_DB_PATH}"
-                plocate_command.extend(["-d", db_list])
+                plocate_command.extend(["--database", db_list])
+            elif db_selection:
+                # If a specific path is selected (System or Media only), use --database
+                plocate_command.extend(["--database", db_selection])
+                # NOTE: If db_selection is empty/None, no argument is added (falls back to plocate default).
+
+                # 1.3. Add the search term
+            plocate_command.append(self.plocate_term)
 
             # Execute plocate (this is the potentially long-running blocking call)
             result = subprocess.run(
@@ -754,6 +768,8 @@ class PlocateGUI(QWidget):
         self._last_plocate_term: str = ""
         # Live filter
         self.live_filter_enabled = True
+        # NEW: Default database selection state
+        self._current_db_selection = "both"
         # --- End Internal State ---
 
         # Initialize ThreadPool for non-blocking operations
@@ -813,6 +829,8 @@ class PlocateGUI(QWidget):
         self.search_input.setToolTip(
             _("""Use keywords, category shortcuts, or advanced filters.
 
+[☰] Select the database scope (System, Media, Both) using the button on the left.
+
 Examples:
     - Keywords: "project report"
     - Category: ::doc final_report
@@ -820,16 +838,72 @@ Examples:
 
 Keywords are space-separated. Regex must be the final term.""")
         )
+
+        # DATABASE SELECTOR AS LEADING ACTION <<<
+
+        # 1. Create the QToolButton (replaces the search icon/action)
+        self.db_menu_btn = QToolButton()
+        self.db_menu_btn.setText("☰")
+        self.db_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.db_menu_btn.setToolTip(_("Select the search database (System, Media, Both)\n\nCTRL+SHIFT+D"))
+        self.db_menu_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        self.db_menu_btn.setStyleSheet("""
+            QToolButton {
+                /* Base styles for integration */
+                background: transparent;
+                border: none;
+                padding: 3px 0;
+                color: palette(text);
+            }
+            QToolButton::menu-indicator {
+                image: none;
+            }
+        """)
+        # 2. Create the Menu and Actions
+        db_menu = QMenu(self)
+
+        # Actions carry the database path in their 'data' and are checkable
+        # The QAction constructor fixes the TypeError by not using 'data' keyword argument
+        self.action_db_both = QAction(_("Both Databases"), self)
+        self.action_db_system = QAction(_("System Only"), self)
+        self.action_db_media = QAction(_("Media Only"), self)
+
+        # Set checkable state for exclusivity
+        self.action_db_both.setCheckable(True)
+        self.action_db_system.setCheckable(True)
+        self.action_db_media.setCheckable(True)
+
+        # Set 'Both' as checked by default
+        self.action_db_both.setChecked(True)
+
+        # 3. Assign the database paths/keys using setData()
+        self.action_db_both.setData("both")
+        self.action_db_system.setData(DEFAULT_DB_PATH)
+        self.action_db_media.setData(MEDIA_DB_PATH)
+
+        db_menu.addAction(self.action_db_both)
+        db_menu.addAction(self.action_db_system)
+        db_menu.addAction(self.action_db_media)
+        self.db_menu_btn.setMenu(db_menu)
+
+        # 4. Connect the signal to the handler
+        db_menu.triggered.connect(self.handle_db_selection_action)
+
+        # 5. Create a QWidgetAction to host the QToolButton (Required to embed a widget)
+        db_widget_action = QWidgetAction(self.search_input)
+        db_widget_action.setDefaultWidget(self.db_menu_btn)
+
+        # 6. Add the widget action to the leading position (where the search icon was)
+        self.search_input.addAction(db_widget_action, QLineEdit.ActionPosition.LeadingPosition)
+
         # Connect search input to the new case logic
         self.search_input.textChanged.connect(self.handle_input_case_change)
 
-        search_icon = QIcon.fromTheme("edit-find")
-        search_action = QAction(search_icon, "", self.search_input)
-        # Ensure compatibility with PyQt6 ActionPosition enumeration
-        self.search_input.addAction(search_action, QLineEdit.ActionPosition.LeadingPosition)
         # Connect to a dedicated search handler that starts the worker
         self.search_input.returnPressed.connect(self.run_search)
         self.search_input.setClearButtonEnabled(True)
+
+        # Finally, add the single, configured search input to the layout
         search_options_layout.addWidget(self.search_input)
 
         # Category Filter ComboBox (UPDATED TO INCLUDE ICONS)
@@ -996,6 +1070,28 @@ Keywords are space-separated. Regex must be the final term.""")
 
         self.setLayout(main_layout)
         self.search_input.setFocus()
+
+    def handle_db_selection_action(self, action: QAction):
+        """
+        Handles selection from the QToolButton menu, updates the internal state,
+        and runs the search with the new database scope.
+        """
+        selected_db_data = action.data()
+
+        # 1. Update the internal state
+        self._current_db_selection = selected_db_data
+
+        # 2. Update the checked state of all menu actions (exclusive selection)
+        self.action_db_both.setChecked(False)
+        self.action_db_system.setChecked(False)
+        self.action_db_media.setChecked(False)
+        action.setChecked(True)  # Set the clicked one as checked
+
+        # 3. Update button text for quick identification (e.g., 'Both', 'Syst', 'Medi')
+        # Use action.text()[:4] for a short string or use the full text if preferred
+
+        # 4. Execute the search with the new configuration
+        self.run_search()
 
     # --- NEW METHOD: Get Database Modification Status ---
     def get_db_mod_date_status(self) -> str:
@@ -1450,6 +1546,8 @@ Keywords are space-separated. Regex must be the final term.""")
         self.category_combobox.setDisabled(is_disabled)
         self.case_insensitive_btn.setDisabled(is_disabled)
         self.filter_input.setDisabled(is_disabled)  # NEW: Disable in-memory filter during plocate search
+        # NEW: Disable database selector button during search
+        self.db_menu_btn.setDisabled(is_disabled)
 
         if is_searching:
             # Show search progress
@@ -1559,12 +1657,16 @@ Keywords are space-separated. Regex must be the final term.""")
         # The category regex comes from the current ComboBox state (set by category_changed or the shortcut block above)
         category_regex = self.current_category_regex
 
+        # --- UPDATED: GET DATABASE SELECTION FROM INTERNAL STATE ---
+        db_selection = self._current_db_selection
+
         # 3. Create and launch the worker
         worker = SearchWorker(
             plocate_term,
             post_plocate_filters,
             category_regex,
-            self.case_insensitive_search
+            self.case_insensitive_search,
+            db_selection  # PASS THE DATABASE SELECTION
         )
         self.search_worker = worker  # Store reference for cancellation
         worker.signals.finished.connect(self.search_finished)
@@ -1899,7 +2001,18 @@ Keywords are space-separated. Regex must be the final term.""")
             event.accept()
             return
 
-        # 11. Handle Ctrl + Shift + L (Toggle Auto Filter)
+        # 11. Handle Ctrl + Shift + D (Show Database Menu) - NEW SHORTCUT
+        is_ctrl_shift_d = (key == Qt.Key.Key_D and
+                           (modifiers & Qt.KeyboardModifier.ControlModifier) and
+                           (modifiers & Qt.KeyboardModifier.ShiftModifier))
+
+        if is_ctrl_shift_d:
+            # Show the menu associated with the QToolButton
+            self.db_menu_btn.showMenu()
+            event.accept()
+            return
+
+        # 12. Handle Ctrl + Shift + L (Toggle Auto Filter)
         is_ctrl_shift_l = (key == Qt.Key.Key_L and
                            (modifiers & Qt.KeyboardModifier.ControlModifier) and
                            (modifiers & Qt.KeyboardModifier.ShiftModifier))
@@ -1909,7 +2022,7 @@ Keywords are space-separated. Regex must be the final term.""")
             event.accept()
             return
 
-        # 12. Handle Ctrl + Shift + F for category filter focus
+        # 13. Handle Ctrl + Shift + F for category filter focus
         is_ctrl_shift_f = (event.key() == Qt.Key.Key_F and
                            (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and
                            (event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
