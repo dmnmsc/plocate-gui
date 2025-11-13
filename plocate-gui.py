@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton,
     QTableView, QMessageBox, QHBoxLayout, QHeaderView, QLabel, QCheckBox,
     QMenu, QProgressBar, QComboBox, QDialog, QDialogButtonBox, QGroupBox,
-    QToolButton, QWidgetAction
+    QToolButton, QWidgetAction, QStyle
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QUrl,
@@ -843,7 +843,9 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # 1. Create the QToolButton (replaces the search icon/action)
         self.db_menu_btn = QToolButton()
-        self.db_menu_btn.setText("☰")
+        style = QApplication.instance().style()
+        menu_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileDialogListView)
+        self.db_menu_btn.setIcon(menu_icon)
         self.db_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.db_menu_btn.setToolTip(_("Select the search database (System, Media, Both)\n\nCTRL+SHIFT+D"))
         self.db_menu_btn.setCursor(Qt.CursorShape.ArrowCursor)
