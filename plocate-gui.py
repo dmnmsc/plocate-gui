@@ -849,6 +849,13 @@ class PlocateGUI(QWidget):
 
         self.current_sort_column = -1
         self.current_sort_order = Qt.SortOrder.AscendingOrder
+
+        # NEW: Timer for debouncing the in-memory filter
+        self.filter_debounce_timer = QTimer()
+        self.filter_debounce_timer.setSingleShot(True)
+        # Set the delay to 200ms (adjust as needed, 150-300ms is typical)
+        self.filter_debounce_timer.setInterval(200)
+
         self._initial_sizing_done = False
 
         main_layout = QVBoxLayout()
@@ -1022,8 +1029,10 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # >>> NEW CONDITIONAL CONNECTIONS <<<
         # 1. Conditional connection: only filters if Live Filter is active
-        self.filter_input.textChanged.connect(self._handle_filter_input_change)
-        # 2. Enter connection: always filters when Enter is pressed
+        self.filter_input.textChanged.connect(self._schedule_in_memory_filter)
+        # 2. Connect the timer timeout to the filter function
+        self.filter_debounce_timer.timeout.connect(self._handle_filter_input_change)
+        # 3. Enter connection: always filters when Enter is pressed
         self.filter_input.returnPressed.connect(self.run_in_memory_filter)
 
         main_layout.addLayout(filter_layout)
@@ -1600,6 +1609,19 @@ Keywords are space-separated. Regex must be the final term.""")
             else:
                 self.result_table.horizontalHeader().setSortIndicator(
                     -1, Qt.SortOrder.AscendingOrder)
+
+    def _schedule_in_memory_filter(self):
+        """
+        Schedules the execution of the in-memory filter with a debounce delay.
+        Cancels any pending filter execution.
+        """
+        # Stop any pending timer (the debounce logic)
+        if self.filter_debounce_timer.isActive():
+            self.filter_debounce_timer.stop()
+
+        # Start the timer. When it expires, it will call run_in_memory_filter.
+        # Note: We connect to the function itself, not the scheduled worker (yet).
+        self.filter_debounce_timer.start()
 
     def _handle_live_filter_toggle_button(self, is_checked: bool):
         """
