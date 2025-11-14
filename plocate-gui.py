@@ -273,6 +273,30 @@ def get_icon_for_file_type(filepath: str, is_dir: bool) -> QIcon:
     return QIcon.fromTheme("text-x-generic")
 
 
+# --- File Type Utility (Name Getter) ---
+def get_category_name_for_file(filepath: str, is_dir: bool) -> str:
+    """Returns the translated category name based on file extension or directory status."""
+
+    if is_dir:
+        return _("Directory")
+
+    # 1. Check common extensions defined in FILE_CATEGORIES
+    ext = os.path.splitext(filepath)[1].lower()
+
+    # Iterate over the predefined categories to find a match
+    for category_name_untranslated, extensions in FILE_CATEGORIES.items():
+        # Skip the special DIR_ONLY and All Categories
+        if not extensions or extensions[0] == "DIR_ONLY":
+            continue
+
+        if ext in extensions:
+            # Return the translated category name
+            return _(category_name_untranslated)
+
+    # 2. Fallback for files without a specific category or generic files
+    return _("File")
+
+
 # --- Stat Worker (for non-blocking os.stat) ---
 class StatSignals(QObject):
     """Defines signals available from a running worker thread."""
@@ -532,7 +556,7 @@ class PlocateResultsModel(QAbstractTableModel):
         super().__init__(parent)
         # Data format: (name, path, is_dir)
         self._data = data if data is not None else []
-        self._headers = [_("Name"), _("Path")]
+        self._headers = [_("Name"), _("Path"), _("Type")]
 
     def set_data(self, data):
         """Replaces the model data and notifies the view."""
@@ -562,12 +586,17 @@ class PlocateResultsModel(QAbstractTableModel):
         # Unpack the three elements: (name, path, is_dir)
         name, path, is_dir = self._data[row]
 
+        # Get full path for categorization
+        full_path = os.path.join(path, name)
+
         # 1. Display/Edit Role (Text)
         if role == Qt.ItemDataRole.DisplayRole or role == Qt.ItemDataRole.EditRole:
             if col == 0:
                 return name
-            else:
+            elif col == 1:
                 return path
+            elif col == 2:  # NEW TYPE COLUMN
+                return get_category_name_for_file(full_path, is_dir)
 
         # 2. Decoration Role (Icon) - Only for the 'Name' column
         if role == Qt.ItemDataRole.DecorationRole and col == 0:
@@ -600,14 +629,39 @@ class PlocateResultsModel(QAbstractTableModel):
         """Sorts the data by the specified column and order."""
         self.layoutAboutToBeChanged.emit()
 
-        # Sort the internal data list (case-insensitive for names and paths)
-        try:
-            # Sort uses index 0 (Name) or index 1 (Path)
-            self._data.sort(key=lambda x: str(x[column]).lower(),
-                            reverse=(order == Qt.SortOrder.DescendingOrder))
-        except IndexError:
-            # Avoid errors if the column does not exist
-            pass
+        # --- Nested functions for sorting keys (Replaces lambda assignments) ---
+
+        def sort_by_name(x):
+            """Returns the lowercase name for sorting."""
+            # x[0] is name
+            return str(x[0]).lower()
+
+        def sort_by_path(x):
+            """Returns the lowercase path for sorting."""
+            # x[1] is path
+            return str(x[1]).lower()
+
+        def sort_by_type(x):
+            """Returns the lowercase category name for sorting."""
+            # x[1] path, x[0] name, x[2] is_dir
+            full_path = os.path.join(x[1], x[0])
+            return get_category_name_for_file(full_path, x[2]).lower()
+
+        # --- Assign the correct key function ---
+
+        if column == 0:
+            key_fn = sort_by_name
+        elif column == 1:
+            key_fn = sort_by_path
+        elif column == 2:
+            key_fn = sort_by_type
+        else:
+            self.layoutChanged.emit()
+            return
+
+        # Apply the sorting
+        self._data.sort(key=key_fn,
+                        reverse=(order == Qt.SortOrder.DescendingOrder))
 
         self.layoutChanged.emit()
 
@@ -984,8 +1038,19 @@ Keywords are space-separated. Regex must be the final term.""")
         self.result_table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
 
         header = self.result_table.horizontalHeader()
+
+        # 1. Set Interactive mode as the base for all columns (allows manual resizing)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(True)
+
+        # 2. Configure Path column (index 1) to Stretch, taking all available space.
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+
+        # 3. Configure Type column (index 2) to ResizeToContents, taking minimum required width.
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+
+        # 4. CRITICAL: Disable stretching of the last section.
+        #    This allows Column 1 (Path) to stretch instead of Column 2 (Type).
+        header.setStretchLastSection(False)
 
         self.result_table.setSortingEnabled(True)
         header.sectionClicked.connect(self.update_sort_state)
