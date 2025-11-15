@@ -548,6 +548,75 @@ class SearchWorker(QRunnable):
 # --- END NEW SEARCH WORKER ---
 
 
+# NEW: FILTER RESULTS WORKER
+class FilterWorkerSignals(QObject):
+    """Defines the signals available from the Worker."""
+    # Emits: (Filtered results list, original count, sort column)
+    finished = pyqtSignal(list, int, int)
+
+
+class FilterRunnable(QRunnable):
+    """
+    Executes the in-memory filtering logic in a background thread (thread pool).
+    """
+
+    def __init__(self, raw_data, filter_params, sort_params):
+        super().__init__()
+        # Ensure auto-deletion when finished
+        self.setAutoDelete(True)
+        self.raw_data = raw_data
+        self.filter_params = filter_params
+        self.sort_params = sort_params
+        self.signals = FilterWorkerSignals()
+
+    def run(self):
+        # Unpack parameters
+        full_filter_text = self.filter_params['full_filter_text']
+        effective_category_regex = self.filter_params['effective_category_regex']
+        case_insensitive_search = self.filter_params['case_insensitive_search']
+        current_sort_column = self.sort_params['column']
+
+        # 1. Tokenize and get original count
+        # NOTE: Assumes tokenize_search_query is available globally/imported
+        filter_keywords_list, _ = tokenize_search_query(full_filter_text)
+        data_to_filter = self.raw_data
+        raw_count = len(self.raw_data)
+
+        # --- SECTION 1: Category Filtering ---
+        if effective_category_regex is not None:
+            if effective_category_regex == "FILTER_BY_IS_DIR_TYPE":
+                data_to_filter = [
+                    (name, path, is_dir) for name, path, is_dir in data_to_filter if is_dir]
+            else:
+                try:
+                    # NOTE: Assumes re is imported
+                    category_filter_regex = re.compile(effective_category_regex, re.IGNORECASE)
+                    data_to_filter = [f for f in data_to_filter if
+                                      category_filter_regex.search(f[0]) or category_filter_regex.search(f[1])]
+                except re.error:
+                    data_to_filter = []
+
+                    # --- SECTION 2: Text Keyword Filtering ---
+        filtered_results = []
+        if filter_keywords_list:
+            for name, path, is_dir in data_to_filter:
+                # NOTE: Assumes os is imported
+                full_path = os.path.join(path, name)
+
+                if case_insensitive_search:
+                    full_path_cmp = full_path.lower()
+                    if all(token.lower() in full_path_cmp for token in filter_keywords_list):
+                        filtered_results.append((name, path, is_dir))
+                else:
+                    if all(token in full_path for token in filter_keywords_list):
+                        filtered_results.append((name, path, is_dir))
+        else:
+            filtered_results = data_to_filter
+
+        # 3. Emit the result back to the main thread
+        self.signals.finished.emit(filtered_results, raw_count, current_sort_column)
+
+
 # Model implementation for QTableView
 class PlocateResultsModel(QAbstractTableModel):
     """Data model for QTableView storing plocate results."""
@@ -834,6 +903,8 @@ class PlocateGUI(QWidget):
         self.update_worker = None
         # Reference to the search worker for cancellation
         self.search_worker = None  # NEW: Reference for search worker
+        # Flag to prevent launching multiple filter workers simultaneously
+        self.filter_worker_running = False
 
         # Try to load the application icon from the system theme
         icon = QIcon.fromTheme("plocate-gui")
@@ -1033,7 +1104,7 @@ Keywords are space-separated. Regex must be the final term.""")
         # 2. Connect the timer timeout to the filter function
         self.filter_debounce_timer.timeout.connect(self._handle_filter_input_change)
         # 3. Enter connection: always filters when Enter is pressed
-        self.filter_input.returnPressed.connect(self.run_in_memory_filter)
+        self.filter_input.returnPressed.connect(self._launch_filter_worker)
 
         main_layout.addLayout(filter_layout)
         # --- END NEW FILTER BAR ---
@@ -1263,7 +1334,7 @@ Keywords are space-separated. Regex must be the final term.""")
             # if text:
             #    if self._raw_plocate_results:
             #          In-memory re-filtering now respects the updated sensitivity
-            #        self.run_in_memory_filter(rerun_plocate=False)
+            #        self._launch_filter_worker(rerun_plocate=False)
 
     def toggle_case_insensitive(self):
         """
@@ -1281,7 +1352,7 @@ Keywords are space-separated. Regex must be the final term.""")
 
         # If there are already loaded results, reapply the in-memory filter only
         if self._raw_plocate_results:
-            self.run_in_memory_filter(rerun_plocate=False)
+            self._launch_filter_worker()
 
         # Otherwise, if there is search text but no results yet, run a full search
         elif self.search_input.text().strip():
@@ -1298,7 +1369,7 @@ Keywords are space-separated. Regex must be the final term.""")
         # This is faster as it avoids the subprocess.run(['plocate', ...]) call.
         if self._raw_plocate_results:
             # Rerunning plocate is set to False as we are only filtering existing data.
-            self.run_in_memory_filter(rerun_plocate=False)
+            self._launch_filter_worker()
 
             # Original behavior if no results are stored or the main search box has text.
         elif self.search_input.text().strip():
@@ -1484,24 +1555,53 @@ Keywords are space-separated. Regex must be the final term.""")
         # Re-apply the size constraints when the window size changes
         self._apply_responsive_column_sizing()
 
-    # --- NEW: In-Memory Filter Logic (COMBINED WITH CATEGORY SHORTCUT AND MULTI-KEYWORD) ---
-    def run_in_memory_filter(self, rerun_plocate=True):
+    # --- NEW: FILTER WORDER
+    def _handle_filter_worker_finished(self, filtered_results, raw_count, sort_column):
         """
-        Filters the raw plocate results based on:
-          • The user's additional text in the in-memory filter bar.
-          • The main search bar text (used as an extra filter when present).
-          • The current selected category and case sensitivity setting.
-
-        This function never calls plocate unless explicitly allowed.
+        Slot that receives the filtered results from the worker.
+        Runs on the main thread and updates the UI.
         """
+        self.filter_worker_running = False
 
-        # 0. Determine the source of the data to filter
-        data_to_filter = self._raw_plocate_results
+        # 1. Update model and status bar
+        if not filtered_results:
+            self.model.set_data([(_("No results match filter"), "", False)])
+            self.update_status_display(
+                _("No results match filter (filtered from {})").format(raw_count))
+        else:
+            self.model.set_data(filtered_results)
+            status_message = _("Found {} results (filtered from {})").format(
+                len(filtered_results), raw_count)
+            self.update_status_display(status_message)
 
-        # 1. Combine filter_input (extra user filters) and search_input (main query)
+        # 2. Restore sort and column sizing
+        self._apply_responsive_column_sizing()
+
+        if sort_column != -1:
+            self.model.sort(sort_column, self.current_sort_order)
+            self.result_table.horizontalHeader().setSortIndicator(
+                sort_column, self.current_sort_order)
+        else:
+            self.result_table.horizontalHeader().setSortIndicator(
+                -1, Qt.SortOrder.AscendingOrder)
+
+    def _launch_filter_worker(self):
+        """
+        Gathers necessary parameters and launches the FilterRunnable in the thread pool.
+        This function is called by the debounce timer timeout or the Return key.
+        """
+        raw_data = self._raw_plocate_results
+
+        # 1. Early exit if no data or a worker is already running
+        if not raw_data or self.filter_worker_running:
+            if not raw_data:
+                # If there's no raw data, ensure the model is empty/clean
+                self.model.set_data([])
+                self.update_status_display(self.get_db_mod_date_status())
+            return
+
+        # 2. Collect parameters from the main thread (GUI)
         filter_text = self.filter_input.text().strip()
-        # CRITICAL FIX: Use the term that was *actually* used to run plocate
-        # instead of the current text in the main search bar.
         main_search_text = self._last_plocate_term
 
         # Merge both inputs without overwriting user content
@@ -1514,101 +1614,39 @@ Keywords are space-separated. Regex must be the final term.""")
         # The combined text string used for tokenization
         full_filter_text = " ".join(combined_parts).strip()
 
-        # 2. Tokenize search and extract optional category shortcut (::doc, etc.)
+        # Determine the effective category regex (this must stay in the main thread)
         filter_keywords_list, filter_shortcut_name = tokenize_search_query(full_filter_text)
 
-        # Determine the effective category filter for this execution
-        # 1. Start with the currently selected category from the ComboBox
         effective_category_regex = self.current_category_regex
-
-        # 2. If a shortcut is found in the filter text, it overrides the ComboBox selection for this run
         if filter_shortcut_name:
-            # a. Get the category regex (the name is already translated by CATEGORY_SHORTCUTS)
             selected_category_display_name = filter_shortcut_name
             effective_category_regex = get_category_regex(selected_category_display_name)
 
-            # b. Visually update the ComboBox (blocking signals to prevent recursive calls)
+            # Visually update the combobox (must be done in the main thread)
             index = self.category_combobox.findText(filter_shortcut_name)
             if index != -1 and self.category_combobox.currentIndex() != index:
                 self.category_combobox.blockSignals(True)
                 self.category_combobox.setCurrentIndex(index)
                 self.category_combobox.blockSignals(False)
 
-        # 3. Early exit if no results or no active filters
-        is_all_category = effective_category_regex is None
-        if not data_to_filter or (not filter_keywords_list and is_all_category):
-            if not data_to_filter:
-                self.model.set_data([])
-                self.update_status_display(self.get_db_mod_date_status())
-            else:
-                self.model.set_data(data_to_filter)
-                status_message = _("Found {} results").format(len(data_to_filter))
-                self.update_status_display(status_message)
+        filter_params = {
+            'full_filter_text': full_filter_text,
+            'effective_category_regex': effective_category_regex,
+            'case_insensitive_search': self.case_insensitive_search,
+        }
 
-            # Restore sorting and column sizing
-            self._apply_responsive_column_sizing()
-            if self.current_sort_column != -1:
-                self.model.sort(self.current_sort_column, self.current_sort_order)
-                self.result_table.horizontalHeader().setSortIndicator(
-                    self.current_sort_column, self.current_sort_order)
-            else:
-                self.result_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
-            return
+        sort_params = {
+            'column': self.current_sort_column,
+            'order': self.current_sort_order
+        }
 
-        # 4. Apply category filtering (regex match)
-        if effective_category_regex is not None:
-            if effective_category_regex == "FILTER_BY_IS_DIR_TYPE":
-                # FIX: Filter directly by the is_dir property (index 2 of the tuple)
-                data_to_filter = [
-                    (name, path, is_dir) for name, path, is_dir in data_to_filter if is_dir]
-            else:
-                try:
-                    # Note: Category filtering is done case-insensitive (re.IGNORECASE is in get_category_regex)
-                    category_filter_regex = re.compile(effective_category_regex, re.IGNORECASE)
-                    data_to_filter = [f for f in data_to_filter if
-                                      category_filter_regex.search(f[0]) or category_filter_regex.search(f[1])]
-                except re.error as e:
-                    self.update_status_display(_("Invalid Category Regex: {}").format(e))
-                    data_to_filter = []
+        # 3. Create, connect, and start the worker
+        worker = FilterRunnable(raw_data, filter_params, sort_params)
+        worker.signals.finished.connect(self._handle_filter_worker_finished)
 
-        # 5. Apply text keyword filtering (respecting case sensitivity)
-        filtered_results = []
-        if filter_keywords_list:
-            for name, path, is_dir in data_to_filter:
-                full_path = os.path.join(path, name)
-
-                if self.case_insensitive_search:
-                    full_path_cmp = full_path.lower()
-                    if all(token.lower() in full_path_cmp for token in filter_keywords_list):
-                        filtered_results.append((name, path, is_dir))
-                else:
-                    if all(token in full_path for token in filter_keywords_list):
-                        filtered_results.append((name, path, is_dir))
-        else:
-            filtered_results = data_to_filter
-
-        # 6. Update the model and status bar
-        raw_count = len(self._raw_plocate_results)
-
-        if not filtered_results:
-            self.model.set_data([(_("No results match filter"), "", False)])
-            self.update_status_display(
-                _("No results match filter (filtered from {})").format(raw_count))
-        else:
-            self.model.set_data(filtered_results)
-            status_message = _("Found {} results (filtered from {})").format(
-                len(filtered_results), raw_count)
-            self.update_status_display(status_message)
-
-            # Restore sorting and column sizing
-            self._apply_responsive_column_sizing()
-            if self.current_sort_column != -1:
-                self.model.sort(self.current_sort_column, self.current_sort_order)
-                self.result_table.horizontalHeader().setSortIndicator(
-                    self.current_sort_column, self.current_sort_order)
-            else:
-                self.result_table.horizontalHeader().setSortIndicator(
-                    -1, Qt.SortOrder.AscendingOrder)
+        self.filter_worker_running = True
+        # self.update_status_display(_("Filtering in background..."))
+        self.threadpool.start(worker)
 
     def _schedule_in_memory_filter(self):
         """
@@ -1619,8 +1657,7 @@ Keywords are space-separated. Regex must be the final term.""")
         if self.filter_debounce_timer.isActive():
             self.filter_debounce_timer.stop()
 
-        # Start the timer. When it expires, it will call run_in_memory_filter.
-        # Note: We connect to the function itself, not the scheduled worker (yet).
+        # Start the timer. When it expires, it will call _launch_filter_worker.
         self.filter_debounce_timer.start()
 
     def _handle_live_filter_toggle_button(self, is_checked: bool):
@@ -1635,7 +1672,7 @@ Keywords are space-separated. Regex must be the final term.""")
 
         if self.live_filter_enabled:
             # If live filtering is just activated, apply the filter immediately
-            self.run_in_memory_filter()
+            self._launch_filter_worker()
 
     def _update_live_filter_text(self):
         """Sets the live filter button text based on its internal state (ON/OFF)."""
@@ -1653,7 +1690,7 @@ Keywords are space-separated. Regex must be the final term.""")
         When False, the filter is only executed on pressing Enter (via returnPressed).
         """
         if self.live_filter_enabled:
-            self.run_in_memory_filter()
+            self._launch_filter_worker()
 
     # --- NEW: Non-Blocking Search Runner (Replaces the original blocking logic) ---
     def set_ui_searching_state(self, is_searching: bool):
@@ -1731,7 +1768,7 @@ Keywords are space-separated. Regex must be the final term.""")
 
             # 2. Run the in-memory filter to populate the visible table.
         # This also handles status messages for filtered results.
-        self.run_in_memory_filter()
+        self._launch_filter_worker()
 
         # Move focus to the table header instead of the table itself.
         # This avoids the automatic selection of the first row when results are present.
