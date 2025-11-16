@@ -1426,60 +1426,25 @@ Keywords are space-separated. Regex must be the final term.""")
 
     def _apply_responsive_column_sizing(self):
         """
-        Adjusts the 'Name' column (0) to 40% and manually calculates
-        and assigns the remaining space to 'Path' (1).
+        Adjusts the 'Name' column (index 0) to 40% of the table width
+        on-the-fly, ensuring responsive behavior.
         """
         header = self.result_table.horizontalHeader()
-        table_width = self.result_table.viewport().width()
+        name_col_index = 0
 
+        # 0. Get the visible width of the table's viewport
+        table_width = self.result_table.viewport().width()
         if table_width <= 0:
             return
 
-        # Column Indices
-        NAME_COL = 0
-        PATH_COL = 1
-        TYPE_COL = 2
+        # 1. Calculate the target width (40% of the table)
+        target_width = int(table_width * self.RESPONSIVE_WIDTH_PERCENTAGE)
 
-        # --- 1. Calculate Name Width (40%) ---
-        target_name_width = int(table_width * self.RESPONSIVE_WIDTH_PERCENTAGE)
-        final_name_width = max(target_name_width, self.MIN_NAME_WIDTH)
+        # 2. Ensure the minimum width (clamp)
+        final_width = max(target_width, self.MIN_NAME_WIDTH)
 
-        # --- 2. Force Recalculation of Type Width (CRITICAL FIX) ---
-
-        # Temporarily force all sections to calculate their size based on content.
-        # This is the only reliable way to get the correct minimum width for TYPE_COL (index 2)
-        # immediately after the table data has been cleared.
-        header.resizeSections(QHeaderView.ResizeMode.ResizeToContents)
-
-        # Read the actual size now that it has been forced to recalculate
-        type_width = header.sectionSize(TYPE_COL)
-
-        # Safety check: ensure Type width is reasonable
-        if type_width < 50:
-            # Fallback width if calculation fails (e.g., initial run)
-            type_width = 100
-
-            # --- 3. Calculate and Set Path Width (Remaining Space) ---
-
-        occupied_width = final_name_width + type_width
-
-        # Path width is the total available space minus Name and Type widths
-        remaining_space = table_width - occupied_width
-
-        # Set Path width, ensuring a minimum of 100px for usability
-        final_path_width = max(remaining_space, 100)
-
-        # --- 4. Apply Final Sizes and Restore Interactive Mode ---
-
-        # Apply the calculated width to the Path column (1)
-        header.resizeSection(PATH_COL, final_path_width)
-
-        # Apply the 40% width to the Name column (0)
-        header.resizeSection(NAME_COL, final_name_width)
-
-        # CRITICAL: Restore Interactive mode for all columns to allow manual resizing.
-        # This must be called last to override the temporary ResizeToContents mode.
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        # 3. Apply the size (this overrides manual sizing on every resize)
+        header.resizeSection(name_col_index, final_width)
 
     def resizeEvent(self, event):
         """
@@ -1688,7 +1653,6 @@ Keywords are space-separated. Regex must be the final term.""")
             self._raw_plocate_results = []
             self.model.set_data([(_("Search failed"), "", False)])
             self.update_status_display(_("Search failed: ") + message)
-            self._apply_responsive_column_sizing()
             return
 
         # 1. Store the successful (but pre-in-memory-filtered) results
@@ -1698,7 +1662,6 @@ Keywords are space-separated. Regex must be the final term.""")
         if not display_rows:
             self.model.set_data([(_("No results found"), "", False)])
             self.update_status_display(_("No results found"))
-            self._apply_responsive_column_sizing()
             return
 
             # 2. Run the in-memory filter to populate the visible table.
@@ -2368,18 +2331,6 @@ Keywords are space-separated. Regex must be the final term.""")
         else:
             # User clicked Cancel or closed the dialog
             QMessageBox.information(self, _("Info"), _("Database update cancelled."))
-
-    def showEvent(self, event):
-        """
-        Overrides the show event to force initial column sizing after the window is displayed.
-        """
-        super().showEvent(event)
-
-        if not self._initial_sizing_done:
-            # CRITICAL: Using QTimer.singleShot(0, ...) ensures that the size calculation
-            # is executed AFTER Qt has finished the drawing and layout process.
-            QTimer.singleShot(0, self._apply_responsive_column_sizing)
-            self._initial_sizing_done = True
 
 
 if __name__ == "__main__":
